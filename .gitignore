@@ -1,5 +1,7 @@
 2025NLP_Assignment Brief.pdf
 practicals/
+data/
+results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
