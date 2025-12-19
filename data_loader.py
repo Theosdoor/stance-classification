@@ -78,7 +78,7 @@ def load_context_content(thread_path, url_info):
 
 _thread_cache = {}
 
-KNOWN_EVENTS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
+KNOWN_TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
                 'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
 
 def _get_thread_data(thread_path, load_context=False):
@@ -99,11 +99,11 @@ def _get_thread_data(thread_path, load_context=False):
     source_id = source_file.replace('.json', '')
     source_text = read_tweet_text(os.path.join(source_tweet_dir, source_file))
     
-    # Extract event name from path
-    event = None
+    # Extract topic name from path
+    topic = None
     for part in Path(thread_path).parts:
-        if part in KNOWN_EVENTS:
-            event = part
+        if part in KNOWN_TOPICS:
+            topic = part
             break
     
     # Load URL info and context
@@ -114,7 +114,7 @@ def _get_thread_data(thread_path, load_context=False):
     thread_data = {
         'source_id': source_id,
         'source_text': source_text,
-        'event': event,
+        'topic': topic,
         'urls': url_info,
         'context': context
     }
@@ -142,7 +142,7 @@ def load_data(data_path, label_path, load_context=False):
     """
     Load RumourEval data as a pandas DataFrame.
     
-    Columns: reply_id, event, source_text, source_id, reply_text, label_text, label, urls, context
+    Columns: reply_id, topic, source_text, source_id, reply_text, label_text, label, urls, context
     """
     labels = load_labels(label_path)
     
@@ -174,7 +174,7 @@ def load_data(data_path, label_path, load_context=False):
         
         rows.append({
             'reply_id': reply_id,
-            'event': thread_data['event'],
+            'topic': thread_data['topic'],
             'source_text': thread_data['source_text'],
             'source_id': thread_data['source_id'],
             'reply_text': reply_text,
@@ -208,6 +208,12 @@ def get_test_data(load_context=False):
     """Load the test dataset as a DataFrame."""
     return load_data(TEST_DATA_ROOT, TEST_LABELS, load_context=load_context)
 
+def get_all_data(load_context=False):
+    train_df = get_train_data(load_context=load_context)
+    dev_df = get_dev_data(load_context=load_context)
+    test_df = get_test_data(load_context=load_context)
+    return pd.concat([train_df, dev_df, test_df], ignore_index=True)
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -232,6 +238,4 @@ if __name__ == '__main__':
     print("\n" + "="*50)
     print("Label distribution (train):")
     print(train_df['label_text'].value_counts())
-
-    all_df = pd.concat([train_df, dev_df, test_df], ignore_index=True)
 
