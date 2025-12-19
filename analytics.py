@@ -16,15 +16,20 @@ from data_loader import get_train_data, get_dev_data, get_test_data, get_all_dat
 # nltk
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet, stopwords
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('averaged_perceptron_tagger_eng')
-nltk.download('punkt')
+nltk.download('stopwords', quiet=True)
+nltk.download('wordnet', quiet=True)
+nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+nltk.download('punkt', quiet=True)
 
 # global var
 RAND_SEED = 42
 STOPWORDS = set(stopwords.words('english'))
 PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris'}  # words not to lemmatize
+SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation (found empirically)
+    r'\bcharlie\s+hebdo\b': 'charliehebdo',
+    r'\bsydneysiege\b': 'sydney siege',
+    r'\bgerman\s+wings\b': 'germanwings',
+}
 SAVE_DIR = './results/analytics/'
 WNL = WordNetLemmatizer()
 
@@ -88,6 +93,10 @@ def tokenize(text, lemmatize=True):
     punct_table = str.maketrans('', '', string.punctuation)
     text = text.translate(punct_table)
     
+    # merge charlie hebdo (it appeared as 'charlie', 'hebdo' and 'charliehebdo')
+    for pattern, replacement in SPECIFIC_TRANSFORMATIONS.items():
+        text = re.sub(pattern, replacement, text)
+    
     # tokenise & ignore stopwords
     tokens = [t for t in text.split() if t not in STOPWORDS and len(t) > 2]
     
@@ -97,9 +106,6 @@ def tokenize(text, lemmatize=True):
     
     return tokens
 
-def preprocess_for_lda(text):
-    """Preprocess text for LDA (return as string for CountVectorizer)."""
-    return ' '.join(tokenize(text))
 
 def get_bigrams(tokens):
     """Generate bigrams from a list of tokens."""
@@ -192,22 +198,16 @@ def compare_stance_vs_comment(df):
         'comment': {'reply': comment_reply, 'count': comment_count}
     }
 
-def print_distribution_comparison(distributions, n=15):
-    """Print comparison of token distributions."""
+def plot_distribution_comparison(distributions, n=15, save_dir=SAVE_DIR):
+    """Plot comparison of token distributions using seaborn."""
     stance = distributions['stance']
     comment = distributions['comment']
-    
-    print("\n" + "=" * 80)
-    print("TOKEN DISTRIBUTION: STANCE (S/D/Q) vs NON-STANCE (Comment)")
-    print("=" * 80)
-    print(f"Sample counts: Stance={stance['count']}, Comment={comment['count']}")
     
     # Normalize for fair comparison
     stance_total = sum(stance['reply'].values())
     comment_total = sum(comment['reply'].values())
     
-    # Find distinctive tokens
-    print(f"\nTokens MORE common in STANCE replies:")
+    # Find distinctive tokens for stance
     stance_distinctive = []
     for token, count in stance['reply'].most_common(100):
         stance_freq = count / stance_total
@@ -215,10 +215,9 @@ def print_distribution_comparison(distributions, n=15):
         ratio = stance_freq / comment_freq
         if ratio > 1.5:
             stance_distinctive.append((token, ratio, count))
-    for token, ratio, count in sorted(stance_distinctive, key=lambda x: -x[1])[:n]:
-        print(f"  {token}: {ratio:.2f}x (count={count})")
+    stance_distinctive = sorted(stance_distinctive, key=lambda x: -x[1])[:n]
     
-    print(f"\nTokens MORE common in COMMENT replies:")
+    # Find distinctive tokens for comment
     comment_distinctive = []
     for token, count in comment['reply'].most_common(100):
         comment_freq = count / comment_total
@@ -226,23 +225,51 @@ def print_distribution_comparison(distributions, n=15):
         ratio = comment_freq / stance_freq
         if ratio > 1.5:
             comment_distinctive.append((token, ratio, count))
-    for token, ratio, count in sorted(comment_distinctive, key=lambda x: -x[1])[:n]:
-        print(f"  {token}: {ratio:.2f}x (count={count})")
+    comment_distinctive = sorted(comment_distinctive, key=lambda x: -x[1])[:n]
+    
+    # Create figure with two subplots
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot stance-distinctive tokens
+    if stance_distinctive:
+        tokens, ratios, counts = zip(*stance_distinctive)
+        sns.barplot(x=list(ratios), y=list(tokens), ax=axes[0], 
+                   hue=list(tokens), palette='Blues_r', legend=False)
+        axes[0].set_xlabel('Frequency Ratio (Stance / Comment)')
+        axes[0].set_ylabel('Token')
+        axes[0].set_title(f'Tokens MORE Common in STANCE (S/D/Q) Replies\n(Sample count: {stance["count"]})')
+        axes[0].axvline(x=1.0, color='gray', linestyle='--', alpha=0.7)
+    
+    # Plot comment-distinctive tokens
+    if comment_distinctive:
+        tokens, ratios, counts = zip(*comment_distinctive)
+        sns.barplot(x=list(ratios), y=list(tokens), ax=axes[1],
+                   hue=list(tokens), palette='Oranges_r', legend=False)
+        axes[1].set_xlabel('Frequency Ratio (Comment / Stance)')
+        axes[1].set_ylabel('Token')
+        axes[1].set_title(f'Tokens MORE Common in COMMENT Replies\n(Sample count: {comment["count"]})')
+        axes[1].axvline(x=1.0, color='gray', linestyle='--', alpha=0.7)
+    
+    plt.suptitle('Token Distribution: Stance (S/D/Q) vs Non-Stance (Comment)', fontsize=14)
+    plt.tight_layout()
+    plt.savefig(save_dir + 'token_distribution_comparison.png', dpi=150, bbox_inches='tight')
+    print(f"Saved: {save_dir}token_distribution_comparison.png")
+    plt.show()
 
 # =============================================================================
 # Part (b): LDA Topic Modeling
 # =============================================================================
+def lda_tokenize(text):
+    return ' '.join(tokenize(text)) # string for countvectorizer
 
-def run_lda(texts, n_topics=5, n_words=10):
+def run_lda(texts, n_topics=5):
     """Run LDA on a list of texts. Returns model, vectorizer, and feature names."""
-    vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
+    vectorizer = CountVectorizer(stop_words="english", ngram_range=(1, 3))
     doc_term_matrix = vectorizer.fit_transform(texts)
     
-    lda = LatentDirichletAllocation(n_components=n_topics, random_state=RAND_SEED, max_iter=20)
+    lda = LatentDirichletAllocation(n_components=n_topics, max_iter=20, random_state=RAND_SEED)
     lda.fit(doc_term_matrix)
-    
-    feature_names = vectorizer.get_feature_names_out()
-    return lda, vectorizer, feature_names
+    return lda, vectorizer.get_feature_names_out()
 
 def get_topic_words(lda, feature_names, n_words=10):
     """Extract top words for each topic."""
@@ -260,7 +287,7 @@ def print_topics(topics, title):
     print(f"{'='*80}")
     for i, topic in enumerate(topics):
         words = [w for w, _ in topic]
-        print(f"Topic {i+1}: {', '.join(words)}")
+        print(f"Topic {i}: {', '.join(words)}")
 
 def create_wordcloud(topics, title, save_path=None):
     """Create word cloud visualization for topics. Uses top word as topic name."""
@@ -271,10 +298,10 @@ def create_wordcloud(topics, title, save_path=None):
     for ax, (i, topic) in zip(axes, enumerate(topics)):
         word_freq = {word: score for word, score in topic}
         wc = WordCloud(width=400, height=400, background_color='white',
-                      colormap='viridis', max_words=50)
+                        max_words=50)
         wc.generate_from_frequencies(word_freq)
         ax.imshow(wc, interpolation='bilinear')
-        ax.set_title(f'Topic {i+1}')
+        ax.set_title(f'Topic {i}', fontsize=16)
         ax.axis('off')
     
     plt.suptitle(title, fontsize=14)
@@ -295,22 +322,22 @@ def run_lda_analysis(df, n_topics=5):
     print(f"Comment samples: {len(comment_df)}")
     
     # Preprocess
-    stance_texts = [preprocess_for_lda(text) for text in stance_df['reply_text']]
-    comment_texts = [preprocess_for_lda(text) for text in comment_df['reply_text']]
+    stance_texts = [lda_tokenize(text) for text in stance_df['reply_text']]
+    comment_texts = [lda_tokenize(text) for text in comment_df['reply_text']]
     
     # Run LDA on stance replies
     print("\nRunning LDA on Stance (S/D/Q) replies...")
-    stance_lda, _, stance_features = run_lda(stance_texts, n_topics=n_topics)
+    stance_lda, stance_features = run_lda(stance_texts, n_topics=n_topics)
     stance_topics = get_topic_words(stance_lda, stance_features)
-    print_topics(stance_topics, "Stance Replies (S/D/Q)")
+    # print_topics(stance_topics, "Stance Replies (S/D/Q)")
     filename = SAVE_DIR + "stance_wordcloud.png"
     create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", filename)
     
     # Run LDA on comment replies
     print("\nRunning LDA on Comment replies...")
-    comment_lda, _, comment_features = run_lda(comment_texts, n_topics=n_topics)
+    comment_lda, comment_features = run_lda(comment_texts, n_topics=n_topics)
     comment_topics = get_topic_words(comment_lda, comment_features)
-    print_topics(comment_topics, "Comment Replies")
+    # print_topics(comment_topics, "Comment Replies")
     filename = SAVE_DIR + "comment_wordcloud.png"
     create_wordcloud(comment_topics, "Comment Replies Topics", filename)
 
@@ -329,7 +356,7 @@ if __name__ == '__main__':
     # Part (a): Token distribution comparison
     print("\nComparing stance vs non-stance token distributions...")
     distributions = compare_stance_vs_comment(all_df)
-    print_distribution_comparison(distributions, n=15)
+    plot_distribution_comparison(distributions, n=15)
     
     # Part (b): LDA analysis
     print("\n" + "="*80)
