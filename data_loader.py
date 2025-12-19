@@ -3,10 +3,24 @@ import json
 import pandas as pd
 from pathlib import Path
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
+# vars ----
 
+# mapping
+LABEL_TO_ID = {'support': 0, 'deny': 1, 'query': 2, 'comment': 3}
+ID_TO_LABEL = {v: k for k, v in LABEL_TO_ID.items()}
+
+KNOWN_TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
+                'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
+
+# data paths
+TRAIN_DATA_ROOT = 'data/semeval2017-task8-dataset/rumoureval-data'
+TRAIN_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
+DEV_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
+TEST_DATA_ROOT = 'data/semeval2017-task8-test-data'
+TEST_LABELS = 'data/subtaska.json'
+
+
+# helpers ----
 def load_labels(path):
     with open(path, 'r') as f:
         return json.load(f)
@@ -72,15 +86,8 @@ def load_context_content(thread_path, url_info):
                         pass
     return context
 
-# =============================================================================
-# Thread Cache
-# =============================================================================
 
-_thread_cache = {}
-
-KNOWN_TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
-                'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
-
+_thread_cache = {} # init cache TODO remove before submission
 def _get_thread_data(thread_path, load_context=False):
     """Get cached thread data or load it."""
     cache_key = (thread_path, load_context)
@@ -126,17 +133,6 @@ def clear_cache():
     """Clear the thread data cache."""
     global _thread_cache
     _thread_cache = {}
-
-# =============================================================================
-# Label Mapping
-# =============================================================================
-
-LABEL_TO_ID = {'support': 0, 'deny': 1, 'query': 2, 'comment': 3}
-ID_TO_LABEL = {v: k for k, v in LABEL_TO_ID.items()}
-
-# =============================================================================
-# Data Loading Functions
-# =============================================================================
 
 def load_data(data_path, label_path, load_context=False):
     """
@@ -186,16 +182,8 @@ def load_data(data_path, label_path, load_context=False):
     
     return pd.DataFrame(rows)
 
-# =============================================================================
-# Data Paths
-# =============================================================================
 
-TRAIN_DATA_ROOT = 'data/semeval2017-task8-dataset/rumoureval-data'
-TRAIN_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
-DEV_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
-TEST_DATA_ROOT = 'data/semeval2017-task8-test-data'
-TEST_LABELS = 'data/subtaska.json'
-
+# loading functions
 def get_train_data(load_context=False):
     """Load the training dataset as a DataFrame."""
     return load_data(TRAIN_DATA_ROOT, TRAIN_LABELS, load_context=load_context)
@@ -213,29 +201,3 @@ def get_all_data(load_context=False):
     dev_df = get_dev_data(load_context=load_context)
     test_df = get_test_data(load_context=load_context)
     return pd.concat([train_df, dev_df, test_df], ignore_index=True)
-
-# =============================================================================
-# Main
-# =============================================================================
-
-if __name__ == '__main__':
-    print("Loading Training Data...")
-    train_df = get_train_data()
-    print(f"Loaded {len(train_df)} training samples")
-    print(f"\nColumns: {list(train_df.columns)}")
-    print(f"\nFirst row:\n{train_df.iloc[0]}")
-    
-    print("\n" + "="*50)
-    print("Loading Dev Data...")
-    dev_df = get_dev_data()
-    print(f"Loaded {len(dev_df)} dev samples")
-    
-    print("\n" + "="*50)
-    print("Loading Test Data...")
-    test_df = get_test_data()
-    print(f"Loaded {len(test_df)} test samples")
-    
-    print("\n" + "="*50)
-    print("Label distribution (train):")
-    print(train_df['label_text'].value_counts())
-
