@@ -15,7 +15,6 @@ command:
   - ${interpreter}
   - ${program}
   - "--agent"
-  - ${args}
 
 parameters:
   model_name:
