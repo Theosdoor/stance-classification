@@ -35,21 +35,43 @@ load_dotenv()
 # Configuration
 # ============================================================================
 
-CLASSIFIER_NAME = "deberta-v3-lora-stance"
+CLASSIFIER_NAME = "lora-stance"
 
-# Model configuration
-MODEL_NAME = "microsoft/deberta-v3-base"  # Can swap to "vinai/bertweet-base"
+# Model options
+MODEL_OPTIONS = {
+    "deberta": "microsoft/deberta-v3-base",
+    "bertweet": "vinai/bertweet-base",
+}
+
+# LoRA target module presets per model
+# - "minimal": query + value projections only (fastest training)
+# - "attention": all attention projections (balanced)
+# - "all_linear": all linear layers including FFN (most expressive but slower)
+LORA_TARGET_PRESETS = {
+    "deberta": {
+        "minimal": ["query_proj", "value_proj"],
+        "attention": ["query_proj", "key_proj", "value_proj"],
+        "all_linear": ["query_proj", "key_proj", "value_proj", "dense"],
+    },
+    "bertweet": {
+        "minimal": ["query", "value"],
+        "attention": ["query", "key", "value"],
+        "all_linear": ["query", "key", "value", "dense"],
+    },
+}
+
 MAX_LENGTH = 256
 NUM_LABELS = 4
 
-# LoRA configuration
-LORA_R = 16          # Rank
-LORA_ALPHA = 32      # Alpha scaling
+# LoRA defaults
+LORA_R = 16 # rank
+LORA_ALPHA = 32 # alpha scaling
 LORA_DROPOUT = 0.1
-LORA_TARGET_MODULES = ["query_proj", "value_proj"]  # DeBERTa attention modules
 
 # Training defaults (can be overridden by W&B sweep)
 DEFAULT_CONFIG = {
+    "model_name": "deberta",         # "deberta" or "bertweet"
+    "lora_targets": "attention",     # "minimal", "attention", or "all_linear"
     "learning_rate": 2e-5,
     "batch_size": 16,
     "num_epochs": 10,
@@ -78,7 +100,7 @@ class StanceDataset(Dataset):
     """
     Dataset for stance classification.
     
-    Preprocessing Justification:
+    Preprocessing Justification: TODO for report
     - No aggressive preprocessing (no lemmatization, stopword removal, lowercasing)
       because pre-trained transformers use their own subword tokenizers and benefit
       from original case/form information.
@@ -147,11 +169,25 @@ def compute_class_weights(train_df):
 
 
 def create_model(config):
-    """Create DeBERTa model with LoRA adapter."""
+    """Create model with LoRA adapter. Supports DeBERTa-v3 and BERTweet."""
+    
+    # Resolve model name
+    model_key = config.get("model_name", "deberta")
+    model_path = MODEL_OPTIONS.get(model_key)
+    
+    # Resolve LoRA target modules
+    lora_targets_key = config.get("lora_targets", "attention")
+    target_modules = LORA_TARGET_PRESETS[model_key].get(
+        lora_targets_key, 
+        LORA_TARGET_PRESETS[model_key]["attention"]
+    )
+    
+    print(f"Loading model: {model_path}")
+    print(f"LoRA target modules: {target_modules}")
     
     # Load base model
     model = AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME,
+        model_path,
         num_labels=NUM_LABELS,
         problem_type="single_label_classification"
     )
@@ -162,7 +198,7 @@ def create_model(config):
         r=config.get("lora_r", LORA_R),
         lora_alpha=config.get("lora_alpha", LORA_ALPHA),
         lora_dropout=LORA_DROPOUT,
-        target_modules=LORA_TARGET_MODULES,
+        target_modules=target_modules,
         bias="none",
     )
     
@@ -170,7 +206,7 @@ def create_model(config):
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
     
-    return model.to(DEVICE)
+    return model.to(DEVICE), model_path
 
 
 # ============================================================================
@@ -291,8 +327,10 @@ def train(config=None):
         class_weights = compute_class_weights(train_df).to(DEVICE)
         print(f"\nClass weights: {class_weights.tolist()}")
         
-        # Initialize tokenizer (use slow tokenizer to avoid tiktoken/sentencepiece conversion issues)
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
+        # Initialize tokenizer
+        model_key = config.get("model_name", "deberta")
+        model_path = MODEL_OPTIONS.get(model_key)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
         
         # Create datasets
         train_dataset = StanceDataset(train_df, tokenizer)
@@ -313,7 +351,7 @@ def train(config=None):
         )
         
         # Create model
-        model = create_model(config)
+        model, _ = create_model(config)
         
         # Optimizer and scheduler
         optimizer = torch.optim.AdamW(
@@ -410,58 +448,6 @@ def train(config=None):
 
 
 # ============================================================================
-# W&B Sweep Configuration
-# ============================================================================
-
-SWEEP_CONFIG = {
-    "method": "bayes",  # Bayesian optimization
-    "metric": {
-        "name": "val/macro_f1",
-        "goal": "maximize"
-    },
-    "program": "classifier.py",  # Script to run
-    "command": [
-        "${env}",
-        "${interpreter}",
-        "${program}",
-        "${args}"
-    ],
-    "parameters": {
-        "learning_rate": {
-            "values": [1e-5, 2e-5, 3e-5, 5e-5]
-        },
-        "batch_size": {
-            "values": [8, 16]
-        },
-        "num_epochs": {
-            "value": 10
-        },
-        "warmup_ratio": {
-            "values": [0.0, 0.1, 0.2]
-        },
-        "weight_decay": {
-            "values": [0.0, 0.01, 0.1]
-        },
-        "lora_r": {
-            "values": [8, 16, 32]
-        },
-        "lora_alpha": {
-            "values": [16, 32, 64]
-        }
-    }
-}
-
-
-def run_sweep(count=10):
-    """Run W&B hyperparameter sweep."""
-    sweep_id = wandb.sweep(
-        SWEEP_CONFIG, 
-        project="NLP_cswk"
-    )
-    wandb.agent(sweep_id, train, count=count)
-
-
-# ============================================================================
 # Main
 # ============================================================================
 
@@ -469,8 +455,6 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Train stance classifier")
-    parser.add_argument("--sweep", action="store_true", help="Run W&B sweep (creates sweep + agent)")
-    parser.add_argument("--sweep-count", type=int, default=10, help="Number of sweep runs")
     parser.add_argument("--agent", action="store_true", help="Run as W&B agent worker (for wandb agent <sweep_id>)")
     args = parser.parse_args()
     
@@ -479,9 +463,6 @@ if __name__ == "__main__":
         # W&B agent handles wandb.init() and passes config
         print("Running as W&B agent worker...")
         train()
-    elif args.sweep:
-        print("Starting W&B hyperparameter sweep...")
-        run_sweep(count=args.sweep_count)
     else:
         print("Starting single training run with default config...")
         wandb.init(

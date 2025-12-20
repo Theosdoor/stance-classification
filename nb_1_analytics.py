@@ -18,10 +18,10 @@ nlp = spacy.load('en_core_web_sm')
 # global var
 RAND_SEED = 42
 STOPWORDS = nlp.Defaults.stop_words
-PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris'} # words not to lemmatize
+PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris', 'germanwings', 'alps'} # words not to lemmatize
 SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation (found empirically)
     r'\bcharlie\s+hebdo\b': 'charliehebdo',
-    r'\bsydneysiege\b': 'sydney siege',
+    # r'\bsydney\s+siege\b': 'sydney siege',
     r'\bgerman\s+wings\b': 'germanwings',
 }
 SAVE_DIR = './results/analytics/'
@@ -296,7 +296,7 @@ def run_lda_analysis(df, n_topics=5):
     print("\nRunning LDA on Stance (S/D/Q) replies...")
     stance_lda, stance_features = run_lda(stance_texts, n_topics=n_topics)
     stance_topics = get_topic_words(stance_lda, stance_features)
-    # print_topics(stance_topics, "Stance Replies (S/D/Q)")
+    print_topics(stance_topics, "Stance Replies (S/D/Q)")
     filename = SAVE_DIR + "stance_wordcloud.png"
     create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", filename)
     
@@ -304,13 +304,12 @@ def run_lda_analysis(df, n_topics=5):
     print("\nRunning LDA on Comment replies...")
     comment_lda, comment_features = run_lda(comment_texts, n_topics=n_topics)
     comment_topics = get_topic_words(comment_lda, comment_features)
-    # print_topics(comment_topics, "Comment Replies")
+    print_topics(comment_topics, "Comment Replies")
     filename = SAVE_DIR + "comment_wordcloud.png"
     create_wordcloud(comment_topics, "Comment Replies Topics", filename)
 
 # %%
 if __name__ == '__main__':
-    print("Loading data...")
     all_df = get_all_data() # TODO analyse differenced between different datasets (train, dev, test)
     print(f"Total samples loaded: {len(all_df)}")
     

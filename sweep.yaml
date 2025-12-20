@@ -1,22 +1,33 @@
+# W&B Sweep Configuration for Stance Classifier
+# Usage: wandb sweep sweep.yaml
+#        wandb agent <sweep_id>
+
 project: NLP_cswk
 entity: theo-farrell99-durham-university
-program: classifier.py
-command:
-  - ${env}
-  - /home2/nchw73/myjupyterenv/bin/python
-  - ${program}
-  - --agent
 method: bayes
 metric:
   name: val/macro_f1
   goal: maximize
+
+program: classifier.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--agent"
+  - ${args}
+
 parameters:
+  model_name:
+    values: ["deberta", "bertweet"]
+  lora_targets:
+    values: ["minimal", "attention", "all_linear"]
   learning_rate:
-    values: [1e-5, 2e-5, 3e-5, 5e-5]
+    values: [0.00001, 0.00002, 0.00003, 0.00005]
   batch_size:
     values: [8, 16]
   num_epochs:
-    value: 10
+    value: 20
   warmup_ratio:
     values: [0.0, 0.1, 0.2]
   weight_decay:
