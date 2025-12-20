@@ -1,2 +1,13 @@
 torch
 wandb
+transformers
+peft
+datasets
+scikit-learn
+python-dotenv
+tqdm
+accelerate
+pandas
+numpy
+sentencepiece
+protobuf

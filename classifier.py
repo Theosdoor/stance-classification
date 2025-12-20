@@ -1,162 +1,476 @@
+"""
+Stance Classifier using DeBERTa-v3 with LoRA Fine-tuning
+
+4-way classification: Support, Deny, Query, Comment
+Input: source_text + reply_text concatenation
+Uses W&B for hyperparameter sweeps and diagnostics
+"""
+
 import os
-import torch
+import json
 import numpy as np
-import argparse
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
-from sklearn.utils.class_weight import compute_class_weight
-from data_loader import RumourEvalDataset
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import f1_score, classification_report, confusion_matrix
+from transformers import (
+    AutoTokenizer, 
+    AutoModelForSequenceClassification,
+    get_linear_schedule_with_warmup
+)
+from peft import LoraConfig, get_peft_model, TaskType
+from tqdm import tqdm
+from dotenv import load_dotenv
+import wandb
 
-from nb_main import CLASSIFIER_NAME
+from data_loader import get_train_data, get_dev_data, LABEL_TO_ID, ID_TO_LABEL
 
-def compute_metrics(eval_pred):
-    predictions, labels = eval_pred
-    predictions = np.argmax(predictions, axis=1)
+# Load environment variables
+load_dotenv()
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+CLASSIFIER_NAME = "deberta-v3-lora-stance"
+
+# Model configuration
+MODEL_NAME = "microsoft/deberta-v3-base"  # Can swap to "vinai/bertweet-base"
+MAX_LENGTH = 256
+NUM_LABELS = 4
+
+# LoRA configuration
+LORA_R = 16          # Rank
+LORA_ALPHA = 32      # Alpha scaling
+LORA_DROPOUT = 0.1
+LORA_TARGET_MODULES = ["query_proj", "value_proj"]  # DeBERTa attention modules
+
+# Training defaults (can be overridden by W&B sweep)
+DEFAULT_CONFIG = {
+    "learning_rate": 2e-5,
+    "batch_size": 16,
+    "num_epochs": 10,
+    "warmup_ratio": 0.1,
+    "weight_decay": 0.01,
+    "lora_r": LORA_R,
+    "lora_alpha": LORA_ALPHA,
+}
+
+# Device
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+
+# Random seed for reproducibility
+SEED = 42
+
+# Paths
+CHECKPOINT_DIR = "./results/classifier/"
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+
+# ============================================================================
+# Dataset
+# ============================================================================
+
+class StanceDataset(Dataset):
+    """
+    Dataset for stance classification.
     
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='macro')
-    acc = accuracy_score(labels, predictions)
+    Preprocessing Justification:
+    - No aggressive preprocessing (no lemmatization, stopword removal, lowercasing)
+      because pre-trained transformers use their own subword tokenizers and benefit
+      from original case/form information.
+    - Source + Reply concatenation provides context - replies often reference 
+      source content implicitly.
+    - HTML entities decoded by tokenizer implicitly.
+    """
     
-    return {
-        'accuracy': acc,
-        'f1': f1,
-        'precision': precision,
-        'recall': recall
-    }
+    def __init__(self, df, tokenizer, max_length=MAX_LENGTH):
+        self.df = df.reset_index(drop=True)
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+    
+    def __len__(self):
+        return len(self.df)
+    
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        
+        # Concatenate source and reply text
+        # Format: [CLS] source_text [SEP] reply_text [SEP]
+        source_text = str(row['source_text'])
+        reply_text = str(row['reply_text'])
+        
+        # Tokenize with proper formatting
+        encoding = self.tokenizer(
+            source_text,
+            reply_text,
+            truncation=True,
+            max_length=self.max_length,
+            padding='max_length',
+            return_tensors='pt'
+        )
+        
+        return {
+            'input_ids': encoding['input_ids'].squeeze(0),
+            'attention_mask': encoding['attention_mask'].squeeze(0),
+            'labels': torch.tensor(row['label'], dtype=torch.long)
+        }
 
-class WeightedTrainer(Trainer):
-    def __init__(self, class_weights, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
+
+# ============================================================================
+# Model Setup
+# ============================================================================
+
+def compute_class_weights(train_df):
+    """
+    Compute class weights for imbalanced dataset.
+    
+    Class Imbalance Mitigation:
+    - RumourEval has ~70% Comment class (majority)
+    - Using inverse frequency weighting: weight[c] = total / (num_classes * count[c])
+    - This gives more importance to minority classes (Support, Deny, Query)
+    """
+    label_counts = train_df['label'].value_counts().sort_index()
+    total_samples = len(train_df)
+    num_classes = len(label_counts)
+    
+    weights = []
+    for label_id in range(num_classes):
+        count = label_counts.get(label_id, 1)
+        weight = total_samples / (num_classes * count)
+        weights.append(weight)
+    
+    return torch.tensor(weights, dtype=torch.float32)
+
+
+def create_model(config):
+    """Create DeBERTa model with LoRA adapter."""
+    
+    # Load base model
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME,
+        num_labels=NUM_LABELS,
+        problem_type="single_label_classification"
+    )
+    
+    # Configure LoRA
+    lora_config = LoraConfig(
+        task_type=TaskType.SEQ_CLS,
+        r=config.get("lora_r", LORA_R),
+        lora_alpha=config.get("lora_alpha", LORA_ALPHA),
+        lora_dropout=LORA_DROPOUT,
+        target_modules=LORA_TARGET_MODULES,
+        bias="none",
+    )
+    
+    # Apply LoRA
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    
+    return model.to(DEVICE)
+
+
+# ============================================================================
+# Training
+# ============================================================================
+
+def train_epoch(model, dataloader, optimizer, scheduler, criterion):
+    """Train for one epoch."""
+    model.train()
+    total_loss = 0
+    all_preds = []
+    all_labels = []
+    
+    progress_bar = tqdm(dataloader, desc="Training")
+    for batch in progress_bar:
+        input_ids = batch['input_ids'].to(DEVICE)
+        attention_mask = batch['attention_mask'].to(DEVICE)
+        labels = batch['labels'].to(DEVICE)
         
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        # Handle the num_items_in_batch argument which is new in recent transformers versions
-        # Older versions don't pass it, so we need to be flexible or check signature
-        # But Trainer.compute_loss signature is fixed in the base class. 
-        # Actually, looking at recent Trainer code, num_items_in_batch is an argument.
-        # But we can just capture it in **kwargs if we used *args, **kwargs in signature 
-        # OR just define it in the signature.
+        optimizer.zero_grad()
         
-        labels = inputs.get("labels")
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels
+        )
         
-        if self.class_weights.device != logits.device:
-            self.class_weights = self.class_weights.to(logits.device)
+        # Use weighted loss
+        logits = outputs.logits
+        loss = criterion(logits, labels)
+        
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        scheduler.step()
+        
+        total_loss += loss.item()
+        preds = torch.argmax(logits, dim=1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+        
+        progress_bar.set_postfix({'loss': loss.item()})
+    
+    avg_loss = total_loss / len(dataloader)
+    macro_f1 = f1_score(all_labels, all_preds, average='macro')
+    
+    return avg_loss, macro_f1
+
+
+def evaluate(model, dataloader, criterion):
+    """Evaluate model on validation set."""
+    model.eval()
+    total_loss = 0
+    all_preds = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Evaluating"):
+            input_ids = batch['input_ids'].to(DEVICE)
+            attention_mask = batch['attention_mask'].to(DEVICE)
+            labels = batch['labels'].to(DEVICE)
             
-        loss_fct = torch.nn.CrossEntropyLoss(weight=self.class_weights)
-        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
+            
+            logits = outputs.logits
+            loss = criterion(logits, labels)
+            
+            total_loss += loss.item()
+            preds = torch.argmax(logits, dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    avg_loss = total_loss / len(dataloader)
+    macro_f1 = f1_score(all_labels, all_preds, average='macro')
+    
+    return avg_loss, macro_f1, all_preds, all_labels
+
+
+def train(config=None):
+    """
+    Full training pipeline with W&B logging.
+    
+    Logs:
+    - Training loss per epoch
+    - Validation loss per epoch
+    - Validation macro-F1 per epoch
+    - Best model checkpoint
+    """
+    
+    # Initialize W&B
+    with wandb.init(config=config):
+        config = wandb.config
         
-        return (loss, outputs) if return_outputs else loss
+        print(f"\n{'='*60}")
+        print(f"Training with config: {dict(config)}")
+        print(f"Device: {DEVICE}")
+        print(f"{'='*60}\n")
+        
+        # Set seed
+        torch.manual_seed(SEED)
+        np.random.seed(SEED)
+        
+        # Load data
+        print("Loading data...")
+        train_df = get_train_data()
+        dev_df = get_dev_data()
+        
+        print(f"Train samples: {len(train_df)}")
+        print(f"Dev samples: {len(dev_df)}")
+        print(f"\nClass distribution (train):")
+        print(train_df['label_text'].value_counts())
+        
+        # Compute class weights for imbalance
+        class_weights = compute_class_weights(train_df).to(DEVICE)
+        print(f"\nClass weights: {class_weights.tolist()}")
+        
+        # Initialize tokenizer (use slow tokenizer to avoid tiktoken/sentencepiece conversion issues)
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
+        
+        # Create datasets
+        train_dataset = StanceDataset(train_df, tokenizer)
+        dev_dataset = StanceDataset(dev_df, tokenizer)
+        
+        # Create dataloaders
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=config.batch_size, 
+            shuffle=True,
+            num_workers=0
+        )
+        dev_loader = DataLoader(
+            dev_dataset, 
+            batch_size=config.batch_size, 
+            shuffle=False,
+            num_workers=0
+        )
+        
+        # Create model
+        model = create_model(config)
+        
+        # Optimizer and scheduler
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay
+        )
+        
+        total_steps = len(train_loader) * config.num_epochs
+        warmup_steps = int(total_steps * config.warmup_ratio)
+        
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
+        
+        # Weighted cross-entropy loss for class imbalance
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        
+        # Training loop
+        best_f1 = 0
+        best_epoch = 0
+        
+        for epoch in range(config.num_epochs):
+            print(f"\n--- Epoch {epoch + 1}/{config.num_epochs} ---")
+            
+            # Train
+            train_loss, train_f1 = train_epoch(
+                model, train_loader, optimizer, scheduler, criterion
+            )
+            
+            # Evaluate
+            val_loss, val_f1, val_preds, val_labels = evaluate(
+                model, dev_loader, criterion
+            )
+            
+            # Log to W&B
+            wandb.log({
+                "epoch": epoch + 1,
+                "train/loss": train_loss,
+                "train/macro_f1": train_f1,
+                "val/loss": val_loss,
+                "val/macro_f1": val_f1,
+                "learning_rate": scheduler.get_last_lr()[0]
+            })
+            
+            print(f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f}")
+            print(f"Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f}")
+            
+            # Save best model
+            if val_f1 > best_f1:
+                best_f1 = val_f1
+                best_epoch = epoch + 1
+                
+                # Save checkpoint
+                checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
+                model.save_pretrained(checkpoint_path)
+                tokenizer.save_pretrained(checkpoint_path)
+                
+                print(f"New best model saved! F1: {best_f1:.4f}")
+                
+                # Log confusion matrix for best model
+                cm = confusion_matrix(val_labels, val_preds)
+                wandb.log({
+                    "confusion_matrix": wandb.plot.confusion_matrix(
+                        probs=None,
+                        y_true=val_labels,
+                        preds=val_preds,
+                        class_names=list(LABEL_TO_ID.keys())
+                    )
+                })
+        
+        # Final report
+        print(f"\n{'='*60}")
+        print(f"Training Complete!")
+        print(f"Best Validation F1: {best_f1:.4f} (Epoch {best_epoch})")
+        print(f"{'='*60}")
+        
+        # Log final metrics
+        wandb.log({
+            "best_val_f1": best_f1,
+            "best_epoch": best_epoch
+        })
+        
+        # Print classification report for best epoch
+        print("\nClassification Report (last epoch):")
+        print(classification_report(
+            val_labels, val_preds, 
+            target_names=list(LABEL_TO_ID.keys())
+        ))
+        
+        return best_f1
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=3)
-    parser.add_argument('--batch_size', type=int, default=8)
-    parser.add_argument('--lr', type=float, default=2e-5)
-    parser.add_argument('--output_dir', type=str, default='results')
-    args = parser.parse_args()
 
-    # Paths
-    train_data_root = 'data/semeval2017-task8-dataset/rumoureval-data'
-    train_labels_path = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
-    dev_labels_path = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
-    
-    test_data_root = 'data/semeval2017-task8-test-data'
-    test_labels_path = 'data/subtaska.json'
+# ============================================================================
+# W&B Sweep Configuration
+# ============================================================================
 
-    # Load Data
-    print("Loading datasets...")
-    train_dataset = RumourEvalDataset(train_data_root, train_labels_path)
-    dev_dataset = RumourEvalDataset(train_data_root, dev_labels_path) # Dev is in same folder structure but different labels
-    test_dataset = RumourEvalDataset(test_data_root, test_labels_path)
-    
-    # Compute Class Weights
-    train_labels = [sample[2] for sample in train_dataset.samples]
-    unique_labels = np.array(sorted(list(set(train_labels))))
-    class_weights = compute_class_weight('balanced', classes=unique_labels, y=train_labels)
-    # Map weights to ids: The ids are 0,1,2,3 corresponding to labels. 
-    # RumourEvalDataset.label_to_id = {'support': 0, 'deny': 1, 'query': 2, 'comment': 3}
-    # unique_labels should be ['comment', 'deny', 'query', 'support'] (sorted)
-    # But we need to make sure the order matches the IDs.
-    
-    # Let's be explicit
-    weights_map = dict(zip(unique_labels, class_weights))
-    id_to_label = train_dataset.id_to_label
-    ordered_weights = [weights_map[id_to_label[i]] for i in range(4)]
-    
-    print(f"Class Weights: {ordered_weights}")
+SWEEP_CONFIG = {
+    "method": "bayes",  # Bayesian optimization
+    "metric": {
+        "name": "val/macro_f1",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "learning_rate": {
+            "values": [1e-5, 2e-5, 3e-5, 5e-5]
+        },
+        "batch_size": {
+            "values": [8, 16]
+        },
+        "num_epochs": {
+            "value": 10
+        },
+        "warmup_ratio": {
+            "values": [0.0, 0.1, 0.2]
+        },
+        "weight_decay": {
+            "values": [0.0, 0.01, 0.1]
+        },
+        "lora_r": {
+            "values": [8, 16, 32]
+        },
+        "lora_alpha": {
+            "values": [16, 32, 64]
+        }
+    }
+}
 
-    # Tokenizer
-    model_name = CLASSIFIER_NAME
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    def tokenize_function(examples):
-        return tokenizer(examples["source_text"], examples["reply_text"], padding="max_length", truncation=True, max_length=128)
-
-    # We need to process the dataset to apply tokenization
-    # Since RumourEvalDataset yields dicts, we can wrap it or process it.
-    # The standard way with Trainer is to have a dataset that returns dicts with 'input_ids', 'attention_mask', 'labels'.
-    
-    # Let's wrap the dataset or map it. 
-    # Since it's a custom Torch dataset, we can just modify __getitem__ or use a collator.
-    # But simpler is to convert it to a HF Dataset or pre-tokenize.
-    # Given the small size, pre-tokenizing into memory is fine.
-    
-    def process_dataset(dataset):
-        processed_data = []
-        for i in range(len(dataset)):
-            sample = dataset[i]
-            tokenized = tokenizer(sample['source_text'], sample['reply_text'], padding='max_length', truncation=True, max_length=128)
-            tokenized['labels'] = sample['label']
-            processed_data.append(tokenized)
-        return processed_data
-
-    print("Tokenizing datasets...")
-    train_encoded = process_dataset(train_dataset)
-    dev_encoded = process_dataset(dev_dataset)
-    test_encoded = process_dataset(test_dataset)
-
-    # Model
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=4)
-
-    training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        learning_rate=args.lr,
-        load_best_model_at_end=True,
-        metric_for_best_model="f1",
-        logging_dir=f'{args.output_dir}/logs',
-        logging_steps=100,
+def run_sweep(count=10):
+    """Run W&B hyperparameter sweep."""
+    sweep_id = wandb.sweep(
+        SWEEP_CONFIG, 
+        project="NLP_cswk"
     )
+    wandb.agent(sweep_id, train, count=count)
 
-    trainer = WeightedTrainer(
-        class_weights=ordered_weights,
-        model=model,
-        args=training_args,
-        train_dataset=train_encoded,
-        eval_dataset=dev_encoded, # Use Dev for evaluation during training
-        compute_metrics=compute_metrics,
-    )
 
-    print("Starting training...")
-    trainer.train()
-
-    print("Evaluating on Test set...")
-    test_results1 = trainer.predict(test_encoded)
-    print("Test Results:", test_results1.metrics)
-    
-    # Confusion Matrix
-    preds = np.argmax(test_results1.predictions, axis=1)
-    labels = test_results1.label_ids
-    cm = confusion_matrix(labels, preds)
-    print("\nConfusion Matrix:\n", cm)
-    
-    # Save confusion matrix plot? 
-    # Maybe simpler to just print it for now.
+# ============================================================================
+# Main
+# ============================================================================
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Train stance classifier")
+    parser.add_argument("--sweep", action="store_true", help="Run W&B sweep")
+    parser.add_argument("--sweep-count", type=int, default=10, help="Number of sweep runs")
+    args = parser.parse_args()
+    
+    if args.sweep:
+        print("Starting W&B hyperparameter sweep...")
+        run_sweep(count=args.sweep_count)
+    else:
+        print("Starting single training run with default config...")
+        wandb.init(
+            project="NLP_cswk",
+            config=DEFAULT_CONFIG,
+        )
+        train(DEFAULT_CONFIG)
+        wandb.finish()
