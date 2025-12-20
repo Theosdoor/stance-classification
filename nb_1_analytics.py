@@ -1,33 +1,24 @@
+```python
 # %%
 import html
 import re
 import string
-from collections import Counter # like dict except returns 0 rather than key error
-import numpy as np
+from collections import Counter # like dict except returns 0 rather than key error
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
-import nltk
 import spacy
 
 from data_loader import get_train_data, get_dev_data, get_test_data, get_all_data
-
-# nltk
-from nltk.stem import WordNetLemmatizer
-from nltk.corpus import wordnet, stopwords
-nltk.download('stopwords', quiet=True)
-nltk.download('wordnet', quiet=True)
-nltk.download('averaged_perceptron_tagger_eng', quiet=True)
-nltk.download('punkt', quiet=True)
 
 # spacy
 nlp = spacy.load('en_core_web_sm')
 
 # global var
 RAND_SEED = 42
-STOPWORDS = set(stopwords.words('english'))
+STOPWORDS = nlp.Defaults.stop_words
 PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris'} # words not to lemmatize
 SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation (found empirically)
     r'\bcharlie\s+hebdo\b': 'charliehebdo',
@@ -35,7 +26,20 @@ SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation (found empiricall
     r'\bgerman\s+wings\b': 'germanwings',
 }
 SAVE_DIR = './results/analytics/'
-WNL = WordNetLemmatizer()
+
+# use regex to remove patterns
+RE_PATTERNS = [
+    re.compile(r'https?://\S+|www\.\S+'), # url
+    re.compile(r'@\w+'), # mentions
+    re.compile("["
+            u"\U0001F600-\U0001F64F"  # emoticons
+            u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+            u"\U0001F680-\U0001F6FF"  # transport & map symbols
+            u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            u"\U00002702-\U000027B0" # <-- these are unicode ranges
+            u"\U000024C2-\U0001F251"
+            "]+", flags=re.UNICODE),
+]
 
 # %%
 # functions
@@ -43,32 +47,6 @@ WNL = WordNetLemmatizer()
 
 # ---- preprocessing ----
 
-# lemmatization
-def get_wordnet_pos(penn_tag):
-    """penn treebank tag to wordnet part-of-speech tag (wnl only used wordnet)"""
-    if penn_tag.startswith('J'):
-        return wordnet.ADJ
-    elif penn_tag.startswith('V'):
-        return wordnet.VERB
-    elif penn_tag.startswith('N'):
-        return wordnet.NOUN
-    elif penn_tag.startswith('R'):
-        return wordnet.ADV
-    else:
-        return wordnet.NOUN # assume noun
-
-def lemmatize_tokens(tokens):
-    """
-    lemmatize tokens with part-of-speech tagging 
-    (to differentiate betwen eg. verb claim and noun claim)
-    """
-    pos_tagged = nltk.pos_tag(tokens)
-    return [
-        word if word in PROTECTED_WORDS else WNL.lemmatize(word, get_wordnet_pos(pos))
-        for word, pos in pos_tagged
-    ]
-
-# tokenization
 def tokenize(text, lemmatize=True):
     """Tokenize: lowercase, decode HTML entities, remove URLs, mentions, punctuation, stopwords, and optionally lemmatize."""
     text = text.lower()
@@ -76,20 +54,8 @@ def tokenize(text, lemmatize=True):
     # decode HTML entities (&amp, etc.)
     text = html.unescape(text)
     
-    # use regex to remove patterns
-    re_patterns = [
-        re.compile(r'https?://\S+|www\.\S+'), # url
-        re.compile(r'@\w+'), # mentions
-        re.compile("["
-                u"\U0001F600-\U0001F64F"  # emoticons
-                u"\U0001F300-\U0001F5FF"  # symbols & pictographs
-                u"\U0001F680-\U0001F6FF"  # transport & map symbols
-                u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
-                u"\U00002702-\U000027B0" # <-- these are unicode ranges
-                u"\U000024C2-\U0001F251"
-                "]+", flags=re.UNICODE),
-    ]
-    for pattern in re_patterns:
+    # remove patterns w/ regex
+    for pattern in RE_PATTERNS:
         text = pattern.sub(r'', text)
     
     # remove punct
@@ -100,12 +66,21 @@ def tokenize(text, lemmatize=True):
     for pattern, replacement in SPECIFIC_TRANSFORMATIONS.items():
         text = re.sub(pattern, replacement, text)
     
-    # tokenise & ignore stopwords
-    tokens = [t for t in text.split() if t not in STOPWORDS and len(t) > 2]
-    
-    # lemmatize tokens
+    # tokenise, filter stopwords & lemmatise
+    doc = nlp(text)
     if lemmatize:
-        tokens = lemmatize_tokens(tokens)
+        # protect certain words - otherwise lemmatise
+        tokens = [
+            t.text if t.text in PROTECTED_WORDS else t.lemma_
+            for t in doc
+            if t.text not in STOPWORDS and len(t.text) > 2 and not t.is_space
+        ]
+    else:
+        # without lemmatisation for comparison
+        tokens = [
+            t.text for t in doc
+            if t.text not in STOPWORDS and len(t.text) > 2 and not t.is_space
+        ]
     
     return tokens
 
@@ -122,12 +97,12 @@ def get_ngrams_by_stance(df):
     unigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
     bigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
     
-    for _, row in df.iterrows():
-        label = row['label_text']
+    def process_row(row):
         tokens = tokenize(row['reply_text'])
-        unigrams[label].update(tokens)
-        bigrams[label].update(get_bigrams(tokens))
+        unigrams[row['label_text']].update(tokens)
+        bigrams[row['label_text']].update(get_bigrams(tokens))
     
+    df.apply(process_row, axis=1)
     return unigrams, bigrams
 
 def plot_ngrams_by_stance(unigrams, bigrams, top_n=10, save_dir=SAVE_DIR):
@@ -180,23 +155,21 @@ def compare_stance_vs_comment(df):
     """Compare token distributions: Stance (S/D/Q) vs Non-stance (Comment)."""
     stance_reply = Counter()
     comment_reply = Counter()
-    stance_count = 0
-    comment_count = 0
+    counts = {'stance': 0, 'comment': 0}
     
-    for _, row in df.iterrows():
-        label = row['label_text']
+    def process_row(row):
         tokens = tokenize(row['reply_text'])
-        
-        if label in ['support', 'deny', 'query']:
+        if row['label_text'] in ['support', 'deny', 'query']:
             stance_reply.update(tokens)
-            stance_count += 1
+            counts['stance'] += 1
         else:
             comment_reply.update(tokens)
-            comment_count += 1
+            counts['comment'] += 1
     
+    df.apply(process_row, axis=1)
     return {
-        'stance': {'reply': stance_reply, 'count': stance_count},
-        'comment': {'reply': comment_reply, 'count': comment_count}
+        'stance': {'reply': stance_reply, 'count': counts['stance']},
+        'comment': {'reply': comment_reply, 'count': counts['comment']}
     }
 
 def plot_distribution_comparison(distributions, n=15, save_dir=SAVE_DIR):
@@ -263,7 +236,7 @@ def lda_tokenize(text):
     return ' '.join(tokenize(text)) # string for countvectorizer
 
 def run_lda(texts, n_topics=5):
-    vectorizer = CountVectorizer(stop_words="english", ngram_range=(1, 3))
+    vectorizer = CountVectorizer(ngram_range=(1, 3)) # alr remove stopwords in tokenisation
     doc_term_matrix = vectorizer.fit_transform(texts)
     
     lda = LatentDirichletAllocation(n_components=n_topics, max_iter=20, random_state=RAND_SEED)
