@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
 Stance Classifier using DeBERTa-v3 with LoRA Fine-tuning
 
@@ -453,22 +456,9 @@ def run_sweep(count=10):
     """Run W&B hyperparameter sweep."""
     sweep_id = wandb.sweep(
         SWEEP_CONFIG, 
-        project="stance-classifier"
+        project="NLP_cswk"
     )
     wandb.agent(sweep_id, train, count=count)
-
-
-def create_sweep():
-    """Create a sweep and print the ID for use with wandb agent."""
-    sweep_id = wandb.sweep(
-        SWEEP_CONFIG, 
-        project="stance-classifier"
-    )
-    print(f"\n{'='*60}")
-    print(f"Sweep created! Run the agent with:")
-    print(f"  wandb agent {sweep_id} --count 20")
-    print(f"{'='*60}\n")
-    return sweep_id
 
 
 # ============================================================================
@@ -479,30 +469,24 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Train stance classifier")
-    parser.add_argument("--sweep", action="store_true", help="Run W&B sweep locally")
-    parser.add_argument("--create-sweep", action="store_true", help="Create sweep for remote agent")
+    parser.add_argument("--sweep", action="store_true", help="Run W&B sweep (creates sweep + agent)")
     parser.add_argument("--sweep-count", type=int, default=10, help="Number of sweep runs")
-    args, unknown = parser.parse_known_args()  # Allow unknown args from wandb agent
+    parser.add_argument("--agent", action="store_true", help="Run as W&B agent worker (for wandb agent <sweep_id>)")
+    args = parser.parse_args()
     
-    # Check for W&B API key
-    if not os.environ.get("WANDB_API_KEY"):
-        print("WARNING: WANDB_API_KEY not found in environment.")
-        print("Please set it in .env file or export it directly.")
-        print("Continuing with anonymous mode...\n")
-    
-    if args.create_sweep:
-        # Just create the sweep for remote execution
-        create_sweep()
+    if args.agent:
+        # Called by: wandb agent <sweep_id>
+        # W&B agent handles wandb.init() and passes config
+        print("Running as W&B agent worker...")
+        train()
     elif args.sweep:
-        # Run sweep locally
         print("Starting W&B hyperparameter sweep...")
         run_sweep(count=args.sweep_count)
     else:
-        # Single run (either standalone or from wandb agent)
-        print("Starting training run...")
+        print("Starting single training run with default config...")
         wandb.init(
-            project="stance-classifier",
+            project="NLP_cswk",
             config=DEFAULT_CONFIG,
         )
-        train()  # Config comes from wandb.config
+        train(DEFAULT_CONFIG)
         wandb.finish()

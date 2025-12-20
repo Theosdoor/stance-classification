@@ -1,0 +1,25 @@
+program: classifier.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - --agent
+method: bayes
+metric:
+  name: val/macro_f1
+  goal: maximize
+parameters:
+  learning_rate:
+    values: [1e-5, 2e-5, 3e-5, 5e-5]
+  batch_size:
+    values: [8, 16]
+  num_epochs:
+    value: 10
+  warmup_ratio:
+    values: [0.0, 0.1, 0.2]
+  weight_decay:
+    values: [0.0, 0.01, 0.1]
+  lora_r:
+    values: [8, 16, 32]
+  lora_alpha:
+    values: [16, 32, 64]
