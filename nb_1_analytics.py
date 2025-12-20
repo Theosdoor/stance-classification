@@ -10,6 +10,7 @@ from wordcloud import WordCloud
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 import nltk
+import spacy
 
 from data_loader import get_train_data, get_dev_data, get_test_data, get_all_data
 
@@ -20,6 +21,9 @@ nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
 nltk.download('averaged_perceptron_tagger_eng', quiet=True)
 nltk.download('punkt', quiet=True)
+
+# spacy
+nlp = spacy.load('en_core_web_sm')
 
 # global var
 RAND_SEED = 42

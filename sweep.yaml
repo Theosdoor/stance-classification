@@ -1,3 +1,5 @@
+project: NLP_cswk
+entity: theo-farrell99-durham-university
 program: classifier.py
 command:
   - ${env}
