@@ -24,7 +24,7 @@ nltk.download('punkt', quiet=True)
 # global var
 RAND_SEED = 42
 STOPWORDS = set(stopwords.words('english'))
-PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris'}  # words not to lemmatize
+PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris'} # words not to lemmatize
 SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation (found empirically)
     r'\bcharlie\s+hebdo\b': 'charliehebdo',
     r'\bsydneysiege\b': 'sydney siege',
@@ -36,9 +36,8 @@ WNL = WordNetLemmatizer()
 # %%
 # functions
 
-# =============================================================================
-# Text Preprocessing
-# =============================================================================
+
+# ---- preprocessing ----
 
 # lemmatization
 def get_wordnet_pos(penn_tag):
@@ -111,9 +110,8 @@ def get_bigrams(tokens):
     """Generate bigrams from a list of tokens."""
     return [(tokens[i], tokens[i+1]) for i in range(len(tokens)-1)]
 
-# =============================================================================
-# Part (a): Unigrams and Bigrams by Stance Label
-# =============================================================================
+
+# ----- 1a unigrams and bigrams -----
 
 def get_ngrams_by_stance(df):
     """Compute unigrams and bigrams for replies, grouped by stance label."""
@@ -171,9 +169,8 @@ def plot_ngrams_by_stance(unigrams, bigrams, top_n=10, save_dir=SAVE_DIR):
     print(f"Saved: {save_dir}bigrams_by_stance.png")
     plt.show()
 
-# =============================================================================
-# Part (a): Token Distribution Comparison (Stance vs Non-Stance)
-# =============================================================================
+
+# ----- 1a comparing token dist -----
 
 def compare_stance_vs_comment(df):
     """Compare token distributions: Stance (S/D/Q) vs Non-stance (Comment)."""
@@ -256,14 +253,12 @@ def plot_distribution_comparison(distributions, n=15, save_dir=SAVE_DIR):
     print(f"Saved: {save_dir}token_distribution_comparison.png")
     plt.show()
 
-# =============================================================================
-# Part (b): LDA Topic Modeling
-# =============================================================================
+
+# ----- 1b LDA topics -----
 def lda_tokenize(text):
     return ' '.join(tokenize(text)) # string for countvectorizer
 
 def run_lda(texts, n_topics=5):
-    """Run LDA on a list of texts. Returns model, vectorizer, and feature names."""
     vectorizer = CountVectorizer(stop_words="english", ngram_range=(1, 3))
     doc_term_matrix = vectorizer.fit_transform(texts)
     
@@ -272,7 +267,6 @@ def run_lda(texts, n_topics=5):
     return lda, vectorizer.get_feature_names_out()
 
 def get_topic_words(lda, feature_names, n_words=10):
-    """Extract top words for each topic."""
     topics = []
     for topic in lda.components_:
         top_indices = topic.argsort()[:-n_words-1:-1]
@@ -281,7 +275,6 @@ def get_topic_words(lda, feature_names, n_words=10):
     return topics
 
 def print_topics(topics, title):
-    """Print topic word lists."""
     print(f"\n{'='*80}")
     print(f"LDA TOPICS: {title}")
     print(f"{'='*80}")
@@ -290,7 +283,6 @@ def print_topics(topics, title):
         print(f"Topic {i}: {', '.join(words)}")
 
 def create_wordcloud(topics, title, save_path=None):
-    """Create word cloud visualization for topics. Uses top word as topic name."""
     fig, axes = plt.subplots(1, len(topics), figsize=(4*len(topics), 4))
     if len(topics) == 1:
         axes = [axes]
@@ -313,7 +305,6 @@ def create_wordcloud(topics, title, save_path=None):
     plt.show()
 
 def run_lda_analysis(df, n_topics=5):
-    """Run LDA analysis on stance vs comment replies."""
     # Split data
     stance_df = df[df['label_text'].isin(['support', 'deny', 'query'])]
     comment_df = df[df['label_text'] == 'comment']
@@ -347,18 +338,14 @@ if __name__ == '__main__':
     all_df = get_all_data() # TODO analyse differenced between different datasets (train, dev, test)
     print(f"Total samples loaded: {len(all_df)}")
     
-    # Part (a): Unigrams and bigrams by stance
     print("Part (a): Computing unigrams and bigrams by stance...")
     unigrams, bigrams = get_ngrams_by_stance(all_df)
     plot_ngrams_by_stance(unigrams, bigrams, top_n=10)
     
-    # don't run below for now
-    # Part (a): Token distribution comparison
     print("\nComparing stance vs non-stance token distributions...")
     distributions = compare_stance_vs_comment(all_df)
     plot_distribution_comparison(distributions, n=15)
     
-    # Part (b): LDA analysis
     print("\n" + "="*80)
     print("Part (b): LDA Topic Modeling")
     print("="*80)
