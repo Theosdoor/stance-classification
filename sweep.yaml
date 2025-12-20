@@ -1,7 +1,7 @@
 program: classifier.py
 command:
   - ${env}
-  - ${interpreter}
+  - /home2/nchw73/myjupyterenv/bin/python
   - ${program}
   - --agent
 method: bayes
