@@ -43,6 +43,13 @@ MODEL_OPTIONS = {
     "bertweet": "vinai/bertweet-base",
 }
 
+# Model-specific max sequence lengths
+# BERTweet only supports 128 tokens (position embeddings limit)
+MAX_LENGTH_OPTIONS = {
+    "deberta": 256,
+    "bertweet": 128,
+}
+
 # LoRA target module presets per model
 # - "minimal": query + value projections only (fastest training)
 # - "attention": all attention projections (balanced)
@@ -60,7 +67,6 @@ LORA_TARGET_PRESETS = {
     },
 }
 
-MAX_LENGTH = 256
 NUM_LABELS = 4
 
 # LoRA defaults
@@ -109,7 +115,7 @@ class StanceDataset(Dataset):
     - HTML entities decoded by tokenizer implicitly.
     """
     
-    def __init__(self, df, tokenizer, max_length=MAX_LENGTH):
+    def __init__(self, df, tokenizer, max_length=256):
         self.df = df.reset_index(drop=True)
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -330,11 +336,12 @@ def train(config=None):
         # Initialize tokenizer
         model_key = config.get("model_name", "deberta")
         model_path = MODEL_OPTIONS.get(model_key)
+        max_length = MAX_LENGTH_OPTIONS.get(model_key, 256)
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
         
-        # Create datasets
-        train_dataset = StanceDataset(train_df, tokenizer)
-        dev_dataset = StanceDataset(dev_df, tokenizer)
+        # Create datasets with model-appropriate max length
+        train_dataset = StanceDataset(train_df, tokenizer, max_length=max_length)
+        dev_dataset = StanceDataset(dev_df, tokenizer, max_length=max_length)
         
         # Create dataloaders
         train_loader = DataLoader(
