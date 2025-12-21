@@ -28,6 +28,6 @@ runs_df = pd.DataFrame({
     "name": name_list
     })
 
-runs_df
+print(runs_df)
 
 # %%

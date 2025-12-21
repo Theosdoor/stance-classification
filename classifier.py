@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 Stance Classifier using DeBERTa-v3 with LoRA Fine-tuning
 

@@ -3,6 +3,7 @@ practicals/
 data/
 results/
 wandb/
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -650,3 +651,4 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+

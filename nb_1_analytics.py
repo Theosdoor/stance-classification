@@ -1,4 +1,5 @@
 # %%
+# imports
 import html
 import re
 import string
@@ -12,16 +13,15 @@ import spacy
 
 from data_loader import get_train_data, get_dev_data, get_test_data, get_all_data
 
-# spacy
+# %%
 nlp = spacy.load('en_core_web_sm')
 
 # global var
 RAND_SEED = 42
 STOPWORDS = nlp.Defaults.stop_words
 PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris', 'germanwings', 'alps'} # words not to lemmatize
-SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation (found empirically)
+SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation
     r'\bcharlie\s+hebdo\b': 'charliehebdo',
-    # r'\bsydney\s+siege\b': 'sydney siege',
     r'\bgerman\s+wings\b': 'germanwings',
 }
 SAVE_DIR = './results/analytics/'
