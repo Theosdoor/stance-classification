@@ -19,7 +19,7 @@ from transformers import (
     get_linear_schedule_with_warmup
 )
 from peft import LoraConfig, get_peft_model, TaskType
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from dotenv import load_dotenv
 import wandb
 
@@ -32,7 +32,7 @@ load_dotenv()
 # Configuration
 # ============================================================================
 
-CLASSIFIER_NAME = "lora-stance"
+CLASSIFIER_NAME = "stance-classifier"
 
 # Model options
 MODEL_OPTIONS = {
