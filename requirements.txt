@@ -18,3 +18,4 @@ matplotlib
 seaborn
 wordcloud
 accelerate
+emoji

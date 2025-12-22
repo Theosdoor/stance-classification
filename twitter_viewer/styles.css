@@ -1,0 +1,553 @@
+/* SemEval Twitter Viewer - Modern Dark Theme */
+
+:root {
+    --bg-primary: #000000;
+    --bg-secondary: #16181c;
+    --bg-tertiary: #1d1f23;
+    --bg-hover: #1d1f23;
+    --border-color: #2f3336;
+    --text-primary: #e7e9ea;
+    --text-secondary: #71767b;
+    --text-muted: #536471;
+    --accent-blue: #1d9bf0;
+    --accent-blue-hover: #1a8cd8;
+    --accent-green: #00ba7c;
+    --accent-pink: #f91880;
+    --accent-orange: #ff7a00;
+    
+    /* Stance colors */
+    --stance-support: #00ba7c;
+    --stance-deny: #f4212e;
+    --stance-query: #ffd400;
+    --stance-comment: #71767b;
+    
+    /* Spacing */
+    --sidebar-width: 275px;
+    --border-radius: 16px;
+    --border-radius-sm: 12px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* App Layout */
+.app-container {
+    display: flex;
+    min-height: 100vh;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* Sidebar */
+.sidebar {
+    width: var(--sidebar-width);
+    height: 100vh;
+    position: fixed;
+    left: max(0px, calc((100vw - 1400px) / 2));
+    top: 0;
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    overflow-y: auto;
+}
+
+.sidebar-header {
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-icon {
+    width: 32px;
+    height: 32px;
+    fill: var(--accent-blue);
+}
+
+.logo h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Topic Navigation */
+.topic-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.topic-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+}
+
+.topic-btn:hover {
+    background: var(--bg-hover);
+}
+
+.topic-btn.active {
+    background: var(--bg-tertiary);
+    font-weight: 700;
+}
+
+.topic-btn .count {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    padding: 2px 8px;
+    border-radius: 9999px;
+}
+
+.topic-btn.active .count {
+    background: var(--accent-blue);
+    color: white;
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+    padding: 16px;
+    border-top: 1px solid var(--border-color);
+    margin-top: auto;
+}
+
+.legend h3 {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+/* Stance Badges */
+.stance-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.stance-badge.support {
+    background: rgba(0, 186, 124, 0.15);
+    color: var(--stance-support);
+    border: 1px solid rgba(0, 186, 124, 0.3);
+}
+
+.stance-badge.deny {
+    background: rgba(244, 33, 46, 0.15);
+    color: var(--stance-deny);
+    border: 1px solid rgba(244, 33, 46, 0.3);
+}
+
+.stance-badge.query {
+    background: rgba(255, 212, 0, 0.15);
+    color: var(--stance-query);
+    border: 1px solid rgba(255, 212, 0, 0.3);
+}
+
+.stance-badge.comment {
+    background: rgba(113, 118, 123, 0.15);
+    color: var(--stance-comment);
+    border: 1px solid rgba(113, 118, 123, 0.3);
+}
+
+/* Main Content */
+.main-content {
+    flex: 1;
+    margin-left: var(--sidebar-width);
+    min-height: 100vh;
+    border-right: 1px solid var(--border-color);
+    max-width: 700px;
+}
+
+.main-header {
+    position: sticky;
+    top: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.main-header h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.thread-count {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+/* Tweets Container */
+.tweets-container {
+    padding: 0;
+}
+
+/* Loading Spinner */
+.loading-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Tweet Card */
+.tweet-card {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s ease;
+    cursor: pointer;
+}
+
+.tweet-card:hover {
+    background: var(--bg-hover);
+}
+
+.tweet-card.source-tweet {
+    background: linear-gradient(135deg, rgba(29, 155, 240, 0.05), rgba(249, 24, 128, 0.03));
+}
+
+.tweet-card.source-tweet:hover {
+    background: linear-gradient(135deg, rgba(29, 155, 240, 0.08), rgba(249, 24, 128, 0.05));
+}
+
+/* Tweet Header */
+.tweet-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-pink));
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: white;
+    overflow: hidden;
+}
+
+.avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.tweet-user-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.tweet-user-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.user-name {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.verified-badge {
+    width: 18px;
+    height: 18px;
+    fill: var(--accent-blue);
+}
+
+.user-handle {
+    color: var(--text-secondary);
+}
+
+.tweet-date {
+    color: var(--text-secondary);
+}
+
+.tweet-date::before {
+    content: '·';
+    margin: 0 4px;
+}
+
+/* Tweet Content */
+.tweet-content {
+    margin-left: 60px;
+}
+
+.tweet-text {
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+    word-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+.tweet-text a {
+    color: var(--accent-blue);
+    text-decoration: none;
+}
+
+.tweet-text a:hover {
+    text-decoration: underline;
+}
+
+/* Tweet Meta */
+.tweet-meta {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin-top: 12px;
+    margin-left: 60px;
+}
+
+.tweet-stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.tweet-stat svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.tweet-stat:hover {
+    color: var(--accent-blue);
+}
+
+.tweet-stat.likes:hover {
+    color: var(--accent-pink);
+}
+
+/* Reply Thread */
+.reply-thread {
+    margin-left: 0;
+    border-left: 2px solid var(--border-color);
+    margin-left: 34px;
+}
+
+.reply-thread .tweet-card {
+    position: relative;
+}
+
+.reply-thread .tweet-card::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: var(--border-color);
+}
+
+.reply-thread .reply-thread {
+    margin-left: 30px;
+}
+
+/* Thread Toggle */
+.thread-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    margin-left: 34px;
+    background: transparent;
+    border: none;
+    color: var(--accent-blue);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.thread-toggle:hover {
+    background: rgba(29, 155, 240, 0.1);
+    border-radius: var(--border-radius-sm);
+}
+
+.thread-toggle svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+    transition: transform 0.2s ease;
+}
+
+.thread-toggle.expanded svg {
+    transform: rotate(180deg);
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+}
+
+.empty-state svg {
+    width: 48px;
+    height: 48px;
+    fill: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+/* Responsive */
+@media (max-width: 1000px) {
+    .sidebar {
+        width: 80px;
+        padding: 8px;
+    }
+    
+    .logo h1,
+    .topic-btn span:first-child,
+    .legend,
+    .sidebar-footer {
+        display: none;
+    }
+    
+    .topic-btn {
+        justify-content: center;
+        padding: 12px;
+    }
+    
+    .topic-btn .count {
+        display: none;
+    }
+    
+    .main-content {
+        margin-left: 80px;
+    }
+}
+
+@media (max-width: 600px) {
+    .sidebar {
+        display: none;
+    }
+    
+    .main-content {
+        margin-left: 0;
+        border: none;
+        max-width: 100%;
+    }
+    
+    .avatar {
+        width: 40px;
+        height: 40px;
+    }
+    
+    .tweet-content,
+    .tweet-meta {
+        margin-left: 52px;
+    }
+}
+
+/* Topic icon for mobile */
+.topic-icon {
+    display: none;
+    font-size: 1.2rem;
+}
+
+@media (max-width: 1000px) {
+    .topic-icon {
+        display: block;
+    }
+}
+
+/* Scroll behavior */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
