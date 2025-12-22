@@ -14,13 +14,13 @@
     --accent-green: #00ba7c;
     --accent-pink: #f91880;
     --accent-orange: #ff7a00;
-    
+
     /* Stance colors */
     --stance-support: #00ba7c;
     --stance-deny: #f4212e;
     --stance-query: #ffd400;
     --stance-comment: #71767b;
-    
+
     /* Spacing */
     --sidebar-width: 275px;
     --border-radius: 16px;
@@ -255,7 +255,9 @@ body {
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* Tweet Card */
@@ -396,6 +398,123 @@ body {
     color: var(--accent-pink);
 }
 
+/* Tweet Meta Right (ID + Info) */
+.tweet-meta-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.tweet-id {
+    font-size: 0.75rem;
+    font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.info-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 50%;
+    transition: all 0.15s ease;
+    position: relative;
+}
+
+.info-btn:hover {
+    background: rgba(29, 155, 240, 0.1);
+    color: var(--accent-blue);
+}
+
+.info-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+/* Metadata Popup */
+.tweet-meta-right {
+    position: relative;
+}
+
+.metadata-popup {
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    padding: 16px;
+    min-width: 240px;
+    z-index: 1000;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.metadata-popup h4 {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.metadata-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.metadata-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+}
+
+.metadata-key {
+    color: var(--text-secondary);
+}
+
+.metadata-value {
+    color: var(--text-primary);
+    font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+    font-size: 0.8rem;
+}
+
+.metadata-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    cursor: pointer;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.metadata-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
 /* Reply Thread */
 .reply-thread {
     margin-left: 0;
@@ -421,25 +540,26 @@ body {
     margin-left: 30px;
 }
 
-/* Thread Toggle */
+/* Thread Toggle - now inside tweet card */
 .thread-toggle {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 20px;
-    margin-left: 34px;
+    padding: 8px 12px;
+    margin-left: 60px;
+    margin-top: 12px;
     background: transparent;
     border: none;
     color: var(--accent-blue);
-    font-size: 0.9rem;
+    font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
+    border-radius: var(--border-radius-sm);
 }
 
 .thread-toggle:hover {
     background: rgba(29, 155, 240, 0.1);
-    border-radius: var(--border-radius-sm);
 }
 
 .thread-toggle svg {
@@ -473,23 +593,23 @@ body {
         width: 80px;
         padding: 8px;
     }
-    
+
     .logo h1,
     .topic-btn span:first-child,
     .legend,
     .sidebar-footer {
         display: none;
     }
-    
+
     .topic-btn {
         justify-content: center;
         padding: 12px;
     }
-    
+
     .topic-btn .count {
         display: none;
     }
-    
+
     .main-content {
         margin-left: 80px;
     }
@@ -499,18 +619,18 @@ body {
     .sidebar {
         display: none;
     }
-    
+
     .main-content {
         margin-left: 0;
         border: none;
         max-width: 100%;
     }
-    
+
     .avatar {
         width: 40px;
         height: 40px;
     }
-    
+
     .tweet-content,
     .tweet-meta {
         margin-left: 52px;

@@ -172,6 +172,14 @@ function renderThread(tweet, isReply = false) {
                 </svg>
                 ${tweet.favorite_count || 0}
             </span>
+            <span class="tweet-meta-right">
+                <span class="tweet-id" title="Tweet ID">${tweet.id}</span>
+                <button class="info-btn" title="View metadata" data-metadata='${escapeHtml(JSON.stringify(getMetadata(tweet)))}'>
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+                    </svg>
+                </button>
+            </span>
         </div>
     `;
 
@@ -186,7 +194,7 @@ function renderThread(tweet, isReply = false) {
             repliesContainer.appendChild(replyElement);
         });
 
-        // Add toggle button
+        // Add toggle button inside the tweet card (before the divider)
         const toggleBtn = document.createElement('button');
         toggleBtn.className = 'thread-toggle';
         toggleBtn.innerHTML = `
@@ -206,9 +214,12 @@ function renderThread(tweet, isReply = false) {
                 : `Hide ${tweet.replies.length} ${tweet.replies.length === 1 ? 'reply' : 'replies'}`;
         });
 
+        // Append toggle button inside the tweet card div
+        div.appendChild(toggleBtn);
+
         const wrapper = document.createElement('div');
+        wrapper.className = 'tweet-thread-wrapper';
         wrapper.appendChild(div);
-        wrapper.appendChild(toggleBtn);
         wrapper.appendChild(repliesContainer);
 
         return wrapper;
@@ -303,5 +314,64 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Get metadata object for a tweet (fields not otherwise displayed)
+ */
+function getMetadata(tweet) {
+    return {
+        'Tweet ID': tweet.id,
+        'In Reply To': tweet.in_reply_to_status_id || 'N/A',
+        'Stance': tweet.stance || 'unknown',
+        'User Handle': '@' + tweet.user.screen_name,
+        'Followers': tweet.user.followers_count?.toLocaleString() || '0',
+        'Verified': tweet.user.verified ? 'Yes' : 'No'
+    };
+}
+
+/**
+ * Show metadata popup
+ */
+function showMetadata(btn, metadataJson) {
+    // Remove any existing popups
+    const existing = document.querySelector('.metadata-popup');
+    if (existing) existing.remove();
+
+    const metadata = JSON.parse(metadataJson);
+
+    const popup = document.createElement('div');
+    popup.className = 'metadata-popup';
+
+    let content = '<h4>Tweet Metadata</h4><div class="metadata-list">';
+    for (const [key, value] of Object.entries(metadata)) {
+        content += `<div class="metadata-row"><span class="metadata-key">${key}:</span><span class="metadata-value">${value}</span></div>`;
+    }
+    content += '</div><button class="metadata-close" onclick="this.parentElement.remove()">×</button>';
+
+    popup.innerHTML = content;
+    btn.parentElement.appendChild(popup);
+
+    // Close when clicking outside
+    setTimeout(() => {
+        document.addEventListener('click', function closePopup(e) {
+            if (!popup.contains(e.target) && e.target !== btn) {
+                popup.remove();
+                document.removeEventListener('click', closePopup);
+            }
+        });
+    }, 10);
+}
+
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', init);
+
+// Event delegation for info buttons
+document.addEventListener('click', (e) => {
+    const infoBtn = e.target.closest('.info-btn');
+    if (infoBtn) {
+        e.stopPropagation();
+        const metadataStr = infoBtn.dataset.metadata;
+        if (metadataStr) {
+            showMetadata(infoBtn, metadataStr);
+        }
+    }
+});
