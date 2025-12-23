@@ -97,7 +97,7 @@ def get_ngrams_by_stance(df):
     bigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
     
     def process_row(row):
-        tokens = tokenize(row['reply_text'])
+        tokens = tokenize(row['text'])
         unigrams[row['label_text']].update(tokens)
         bigrams[row['label_text']].update(get_bigrams(tokens))
     
@@ -157,7 +157,7 @@ def compare_stance_vs_comment(df):
     counts = {'stance': 0, 'comment': 0}
     
     def process_row(row):
-        tokens = tokenize(row['reply_text'])
+        tokens = tokenize(row['text'])
         if row['label_text'] in ['support', 'deny', 'query']:
             stance_reply.update(tokens)
             counts['stance'] += 1

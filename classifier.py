@@ -23,7 +23,7 @@ from tqdm.auto import tqdm
 from dotenv import load_dotenv
 import wandb
 
-from data_loader import get_train_data, get_dev_data, LABEL_TO_ID, ID_TO_LABEL
+from data_loader import load_dataset, format_input_with_context, LABEL_TO_ID, ID_TO_LABEL
 
 # Load environment variables
 load_dotenv()
@@ -82,6 +82,8 @@ DEFAULT_CONFIG = {
     "weight_decay": 0.01,
     "lora_r": LORA_R,
     "lora_alpha": LORA_ALPHA,
+    "use_context": True,             # Include context chain in input
+    "use_features": True,            # Include features in input
 }
 
 # Device
@@ -101,37 +103,43 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 class StanceDataset(Dataset):
     """
-    Dataset for stance classification.
+    Dataset for stance classification with thread context and features.
     
-    Preprocessing Justification: TODO for report
-    - No aggressive preprocessing (no lemmatization, stopword removal, lowercasing)
-      because pre-trained transformers use their own subword tokenizers and benefit
-      from original case/form information.
-    - Source + Reply concatenation provides context - replies often reference 
-      source content implicitly.
-    - HTML entities decoded by tokenizer implicitly.
+    Uses format_input_with_context() from data_loader to create input strings
+    with delimiter-marked source, context, parent, and target tweets.
     """
     
-    def __init__(self, df, tokenizer, max_length=256):
+    def __init__(self, df, tokenizer, max_length=256, use_context=True, use_features=True):
         self.df = df.reset_index(drop=True)
+        self.full_df = df  # Keep reference for context lookup
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.use_context = use_context
+        self.use_features = use_features
+        
+        # Pre-compute formatted inputs for efficiency
+        self.inputs = []
+        for idx in range(len(self.df)):
+            row = self.df.iloc[idx]
+            formatted = format_input_with_context(
+                row, self.full_df, 
+                use_features=use_features, 
+                use_context=use_context,
+                max_tokens=max_length,
+                tokenizer=tokenizer
+            )
+            self.inputs.append(formatted)
     
     def __len__(self):
         return len(self.df)
     
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
+        text = self.inputs[idx]
         
-        # Concatenate source and reply text
-        # Format: [CLS] source_text [SEP] reply_text [SEP]
-        source_text = str(row['source_text'])
-        reply_text = str(row['reply_text'])
-        
-        # Tokenize with proper formatting
+        # Tokenize the formatted input
         encoding = self.tokenizer(
-            source_text,
-            reply_text,
+            text,
             truncation=True,
             max_length=self.max_length,
             padding='max_length',
@@ -318,8 +326,7 @@ def train(config=None):
         
         # Load data
         print("Loading data...")
-        train_df = get_train_data()
-        dev_df = get_dev_data()
+        train_df, dev_df, _ = load_dataset()
         
         print(f"Train samples: {len(train_df)}")
         print(f"Dev samples: {len(dev_df)}")
@@ -336,9 +343,20 @@ def train(config=None):
         max_length = MAX_LENGTH_OPTIONS.get(model_key, 256)
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
         
-        # Create datasets with model-appropriate max length
-        train_dataset = StanceDataset(train_df, tokenizer, max_length=max_length)
-        dev_dataset = StanceDataset(dev_df, tokenizer, max_length=max_length)
+        # Get context/feature flags from config
+        use_context = config.get("use_context", True)
+        use_features = config.get("use_features", True)
+        print(f"\nUsing context: {use_context}, Using features: {use_features}")
+        
+        # Create datasets with model-appropriate max length and context/features
+        train_dataset = StanceDataset(
+            train_df, tokenizer, max_length=max_length,
+            use_context=use_context, use_features=use_features
+        )
+        dev_dataset = StanceDataset(
+            dev_df, tokenizer, max_length=max_length,
+            use_context=use_context, use_features=use_features
+        )
         
         # Create dataloaders
         train_loader = DataLoader(
@@ -373,7 +391,7 @@ def train(config=None):
             num_training_steps=total_steps
         )
         
-        # Weighted cross-entropy loss for class imbalance
+        # Weighted cross-entropy loss for class imbalance TODO use focal loss instead
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         
         # Training loop

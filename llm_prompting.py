@@ -20,7 +20,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from data_loader import (
-    get_train_data, get_dev_data, get_test_data,
+    load_dataset, format_input_with_context,
     LABEL_TO_ID, ID_TO_LABEL
 )
 
@@ -58,81 +58,46 @@ SEED = 42
 # Prompt Templates
 # ============================================================================
 
-ZERO_SHOT_TEMPLATE = """You are an expert in rumour stance analysis on social media. Your task is to classify the stance of a reply tweet towards a source tweet.
+# Note: Prompts now built dynamically in build_zero_shot_prompt() and build_few_shot_prompt()
+# to properly format thread context with [SRC]/[PARENT]/[TARGET] markers
 
-**Source Tweet:**
-{source_text}
+# Few-shot examples - Now dynamically selected from training data
+# Strategy: prefer depth > 1 (has context), diverse topics
+# See get_random_examples() for implementation
 
-**Reply Tweet:**
-{reply_text}
-
-**Classification Task:**
-Classify the reply's stance towards the source into exactly ONE of these categories:
-- **SUPPORT**: The reply agrees with, endorses, or provides evidence supporting the source claim
-- **DENY**: The reply disagrees with, refutes, or provides evidence against the source claim
-- **QUERY**: The reply asks questions seeking clarification or verification about the source claim
-- **COMMENT**: The reply makes a neutral observation, provides unrelated information, or doesn't express a clear stance
-
-Respond with ONLY one word: SUPPORT, DENY, QUERY, or COMMENT"""
-
-
-# Few-shot examples - one per class, selected for clarity
-FEW_SHOT_EXAMPLES = [
-    {
-        "source": "BREAKING: Explosion reported at Sydney cafe, hostages held",
-        "reply": "Confirmed by Australian police. Stay safe everyone in that area.",
-        "label": "SUPPORT"
-    },
-    {
-        "source": "Reports say the gunman had ISIS flag in the window",
-        "reply": "That's not an ISIS flag, it's the Shahada. People need to stop spreading misinformation.",
-        "label": "DENY"
-    },
-    {
-        "source": "Prince William spotted at Toronto hotel this morning",
-        "reply": "Is there any photo evidence of this? Seems unlikely given his schedule.",
-        "label": "QUERY"
-    },
-    {
-        "source": "Ferguson protests continue through the night",
-        "reply": "The weather there is supposed to get worse tomorrow.",
-        "label": "COMMENT"
-    }
-]
-
-
-def build_few_shot_prompt(source_text: str, reply_text: str, examples: list = None) -> str:
+def build_few_shot_prompt(thread_context: str, _unused: str = '', examples: list = None) -> str:
     """
     Build a few-shot prompt with examples followed by the test instance.
     
     Args:
-        source_text: The source tweet text
-        reply_text: The reply tweet text
+        thread_context: Formatted thread context from format_input_with_context
+        _unused: Kept for API compatibility
         examples: List of example dicts with 'source', 'reply', 'label' keys
-                  Defaults to FEW_SHOT_EXAMPLES
     
     Returns:
         Formatted few-shot prompt string
     """
-    if examples is None:
-        examples = FEW_SHOT_EXAMPLES
-    
-    prompt = """You are an expert in rumour stance analysis on social media. Your task is to classify the stance of a reply tweet towards a source tweet.
+    prompt = """You are an expert in rumour stance analysis on social media.
+
+**Input Format:**
+- [SRC] = The source tweet containing the rumour claim
+- [PARENT] = The tweet that the target is directly replying to (if different from source)
+- [TARGET] = The tweet whose stance you must classify
 
 **Classification Categories:**
-- SUPPORT: Agrees with, endorses, or supports the source claim
-- DENY: Disagrees with, refutes, or contradicts the source claim
-- QUERY: Asks questions seeking clarification or verification
-- COMMENT: Neutral observation or unrelated information
+- SUPPORT: The target agrees with or supports the source claim
+- DENY: The target disagrees with or refutes the source claim
+- QUERY: The target questions or seeks verification of the source claim
+- COMMENT: The target makes a neutral comment without taking a stance
 
 **Examples:**
 """
     
-    for ex in examples:
-        prompt += f"""
+    if examples:
+        for ex in examples:
+            prompt += f"""
 ---
-Source: "{ex['source']}"
-Reply: "{ex['reply']}"
+Thread: {ex['source']}
 Classification: {ex['label']}
 """
     
@@ -141,23 +106,36 @@ Classification: {ex['label']}
 
 Now classify the following:
 
-**Source Tweet:**
-{source_text}
+**Thread Context:**
+{thread_context}
 
-**Reply Tweet:**
-{reply_text}
+**Task:** Classify the stance of [TARGET] towards [SRC].
 
 Classification:"""
     
     return prompt
 
 
-def build_zero_shot_prompt(source_text: str, reply_text: str) -> str:
+def build_zero_shot_prompt(thread_context: str, _unused: str = '') -> str:
     """Build a zero-shot prompt for stance classification."""
-    return ZERO_SHOT_TEMPLATE.format(
-        source_text=source_text,
-        reply_text=reply_text
-    )
+    return f"""You are an expert in rumour stance analysis on social media.
+
+**Input Format:**
+- [SRC] = The source tweet containing the rumour claim
+- [PARENT] = The tweet that the target is directly replying to (if different from source)
+- [TARGET] = The tweet whose stance you must classify
+
+**Thread Context:**
+{thread_context}
+
+**Classification Task:**
+Classify the stance of [TARGET] towards [SRC] into exactly ONE of these categories:
+- **SUPPORT**: The target agrees with or supports the source claim
+- **DENY**: The target disagrees with or refutes the source claim
+- **QUERY**: The target questions or seeks verification of the source claim
+- **COMMENT**: The target makes a neutral comment without taking a stance
+
+Respond with ONLY one word: SUPPORT, DENY, QUERY, or COMMENT"""
 
 
 # ============================================================================
@@ -306,8 +284,7 @@ def generate_response(
 def classify_instance(
     model, 
     tokenizer, 
-    source_text: str, 
-    reply_text: str, 
+    input_text: str, 
     mode: str = "zero-shot",
     examples: list = None
 ) -> tuple:
@@ -317,8 +294,7 @@ def classify_instance(
     Args:
         model: HuggingFace model
         tokenizer: HuggingFace tokenizer
-        source_text: Source tweet text
-        reply_text: Reply tweet text
+        input_text: Formatted input text (from format_input_with_context)
         mode: "zero-shot" or "few-shot"
         examples: Custom few-shot examples (optional)
     
@@ -326,9 +302,9 @@ def classify_instance(
         Tuple of (predicted_label, raw_response)
     """
     if mode == "zero-shot":
-        prompt = build_zero_shot_prompt(source_text, reply_text)
+        prompt = build_zero_shot_prompt(input_text, '')
     else:
-        prompt = build_few_shot_prompt(source_text, reply_text, examples)
+        prompt = build_few_shot_prompt(input_text, '', examples)
     
     response = generate_response(model, tokenizer, prompt)
     label = parse_stance_response(response)
@@ -369,9 +345,10 @@ def evaluate_prompting(
     iterator = tqdm(df.iterrows(), total=len(df), desc=f"Evaluating ({mode})")
     
     for idx, row in iterator:
+        input_text = format_input_with_context(row, df, use_features=False)
         pred, response = classify_instance(
             model, tokenizer,
-            row['source_text'], row['reply_text'],
+            input_text,
             mode=mode, examples=examples
         )
         
@@ -468,8 +445,8 @@ def get_random_examples(df: pd.DataFrame, n_per_class: int = 1, seed: int = SEED
         
         for _, row in samples.iterrows():
             examples.append({
-                'source': row['source_text'],
-                'reply': row['reply_text'],
+                'source': format_input_with_context(row, df, use_features=False),
+                'reply': '',
                 'label': label.upper()
             })
     
@@ -497,8 +474,8 @@ def get_diverse_examples(df: pd.DataFrame, n_per_class: int = 1) -> list:
         for _, row in class_df.iterrows():
             if row['topic'] not in used_topics or len(examples) % 4 == 3:
                 examples.append({
-                    'source': row['source_text'],
-                    'reply': row['reply_text'],
+                    'source': format_input_with_context(row, class_df, use_features=False),
+                    'reply': '',
                     'label': label.upper()
                 })
                 used_topics.add(row['topic'])
@@ -508,8 +485,8 @@ def get_diverse_examples(df: pd.DataFrame, n_per_class: int = 1) -> list:
         if len(examples) % 4 != 0 or len(examples) == 0:
             row = class_df.iloc[0]
             examples.append({
-                'source': row['source_text'],
-                'reply': row['reply_text'],
+                'source': format_input_with_context(row, class_df, use_features=False),
+                'reply': '',
                 'label': label.upper()
             })
     
@@ -540,10 +517,10 @@ def run_experiment(
     
     # Load data
     print("Loading data...")
-    train_df = get_train_data()
-    test_df = get_test_data() if test_on == "test" else get_dev_data()
+    train_df, dev_df, test_df = load_dataset()
+    eval_df = test_df if test_on == "test" else dev_df
     print(f"Train size: {len(train_df)}")
-    print(f"Test size: {len(test_df)}")
+    print(f"Test size: {len(eval_df)}")
     
     # Load model
     model, tokenizer = load_model(model_key)
@@ -559,7 +536,7 @@ def run_experiment(
     print("Zero-Shot Evaluation")
     print(f"{'='*60}")
     zero_shot_results = evaluate_prompting(
-        model, tokenizer, test_df, 
+        model, tokenizer, eval_df, 
         mode="zero-shot"
     )
     
@@ -576,7 +553,7 @@ def run_experiment(
     print("Few-Shot Evaluation")
     print(f"{'='*60}")
     few_shot_results = evaluate_prompting(
-        model, tokenizer, test_df,
+        model, tokenizer, eval_df,
         mode="few-shot",
         examples=few_shot_examples
     )

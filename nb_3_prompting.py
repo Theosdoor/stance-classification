@@ -12,9 +12,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from data_loader import (
-    get_train_data, get_dev_data, get_test_data,
+    load_dataset, format_input_with_context,
     LABEL_TO_ID, ID_TO_LABEL
 )
+
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
 
 # %%
 # DEVICE_NAME = "cuda" if torch.cuda.is_available() else "cpu"
@@ -33,9 +36,14 @@ pipe = pipeline("text-generation", MODEL_NAME, device_map='auto')
 # prompts
 # defns from paper https://www.derczynski.com/sheffield/papers/rumoureval/1704.07221.pdf
 SYS_PROMPT = """\
-You are an expert in rumour stance analysis on social media. 
-Your task is to classify the stance of a reply tweet towards a rumour (mentioned in the source tweet).
-The stance falls into exactly ONE of these four categories:
+You are an expert in rumour stance analysis on social media.
+
+Your task is to classify the stance of the TARGET tweet towards veracity of the rumour in the SOURCE tweet.
+
+**Input Format:**
+- [SRC] = The source tweet containing the rumour claim
+- [PARENT] = The tweet that the target is directly replying to (if different from source)
+- [TARGET] = The tweet whose stance you must classify
 
 **Classification Labels:**
 - **SUPPORT**: The reply supports the veracity of the source claim
@@ -65,63 +73,90 @@ def parse_response(response_text):
 
 # prompt template (used for both zero-shot and few-shot)
 USER_PROMPT_TEMPLATE = """\
-**Source Tweet:**
-{source_text}
+**Thread Context:**
+{thread_context}
 
-**Reply Tweet:**
-{reply_text}
+**Task:** Classify the stance of [TARGET] towards [SRC].
 """
 
-def build_prompt(source_text, reply_text):
+def build_prompt(thread_context):
     """Build a user prompt for stance classification."""
-    return USER_PROMPT_TEMPLATE.format(
-        source_text=source_text,
-        reply_text=reply_text
-    )
+    return USER_PROMPT_TEMPLATE.format(thread_context=thread_context)
 
 # %%
-# few shot examples
-train_df = get_train_data()
-support_example = train_df[train_df['label_text']=='support'].iloc[0]
-deny_example = train_df[train_df['label_text']=='deny'].iloc[0]
-query_example = train_df[train_df['label_text']=='query'].iloc[0]
-comment_example = train_df[train_df['label_text']=='comment'].iloc[0]
+# few shot examples - selection strategy:
+# 1. Prefer examples with context (depth > 1, has parent)
+# 2. From different topics for diversity
+# 3. Unambiguous stance signals
+train_df, dev_df, test_df = load_dataset()
 
-def build_few_shot_messages(source_text, reply_text):
+def select_few_shot_examples(df):
+    """Select diverse, high-quality few-shot examples.
+    
+    Strategy:
+    - Prefer examples with thread context (depth > 1)
+    - Select from different topics
+    - One example per stance class
+    """
+
+    
+    examples = {}
+    used_topics = set()
+    
+    for label in ['support', 'deny', 'query', 'comment']:
+        class_df = df[df['label_text'] == label].copy()
+        
+        # Prefer examples with context (depth > 1 means has parent)
+        with_context = class_df[class_df['depth'] > 1]
+        
+        # Try to pick from different topics
+        for pool in [with_context, class_df]:
+            if len(pool) == 0:
+                continue
+            # Prefer unused topics
+            unused = pool[~pool['topic'].isin(used_topics)]
+            if len(unused) > 0:
+                selected = unused.sample(1).iloc[0]
+            else:
+                selected = pool.sample(1).iloc[0]
+            examples[label] = selected
+            used_topics.add(selected['topic'])
+            break
+    
+    return examples
+
+FEW_SHOT_EXAMPLES = select_few_shot_examples(train_df)
+
+def build_few_shot_messages(input_text):
     """Build messages with few-shot examples for stance classification."""
     messages = [
         {"role": "system", "content": SYS_PROMPT},
-        # Example 1: Support
-        {"role": "user", "content": build_prompt(support_example['source_text'], support_example['reply_text'])},
-        {"role": "assistant", "content": "SUPPORT"},
-        # Example 2: Deny
-        {"role": "user", "content": build_prompt(deny_example['source_text'], deny_example['reply_text'])},
-        {"role": "assistant", "content": "DENY"},
-        # Example 3: Query
-        {"role": "user", "content": build_prompt(query_example['source_text'], query_example['reply_text'])},
-        {"role": "assistant", "content": "QUERY"},
-        # Example 4: Comment
-        {"role": "user", "content": build_prompt(comment_example['source_text'], comment_example['reply_text'])},
-        {"role": "assistant", "content": "COMMENT"},
-        # Actual query
-        {"role": "user", "content": build_prompt(source_text, reply_text)},
     ]
+    
+    # Add examples in order: support, deny, query, comment
+    for label in ['support', 'deny', 'query', 'comment']:
+        example = FEW_SHOT_EXAMPLES[label]
+        example_input = format_input_with_context(example, train_df, use_features=False)
+        messages.append({"role": "user", "content": build_prompt(example_input)})
+        messages.append({"role": "assistant", "content": label.upper()})
+    
+    # Add actual query
+    messages.append({"role": "user", "content": build_prompt(input_text)})
+    
     return messages
 
-def build_zero_shot_messages(source_text, reply_text):
+def build_zero_shot_messages(input_text):
     """Build messages for zero-shot stance classification."""
     return [
         {"role": "system", "content": SYS_PROMPT},
-        {"role": "user", "content": build_prompt(source_text, reply_text)},
+        {"role": "user", "content": build_prompt(input_text, '')},
     ]
 
 # %%
 # Test sample
-test_df = get_test_data()
 test_sample = test_df[test_df['label_text']=='deny'].iloc[0]
 print(f"Test sample - True label: {test_sample['label_text'].upper()}")
-print(f"Source: {test_sample['source_text']}...")
-print(f"Reply: {test_sample['reply_text']}...")
+print(f"Text: {test_sample['text'][:100]}...")
 print()
 
 # %%
@@ -130,10 +165,8 @@ print("=" * 50)
 print("ZERO-SHOT TEST")
 print("=" * 50)
 
-zero_shot_messages = build_zero_shot_messages(
-    test_sample['source_text'], 
-    test_sample['reply_text']
-)
+test_input = format_input_with_context(test_sample, test_df, use_features=False)
+zero_shot_messages = build_zero_shot_messages(test_input)
 output = pipe(zero_shot_messages)
 raw_response = output[0]["generated_text"][-1]["content"].strip()
 print("Raw response:", raw_response)
@@ -148,10 +181,7 @@ print("=" * 50)
 print("FEW-SHOT TEST")
 print("=" * 50)
 
-few_shot_messages = build_few_shot_messages(
-    test_sample['source_text'], 
-    test_sample['reply_text']
-)
+few_shot_messages = build_few_shot_messages(test_input)
 output = pipe(few_shot_messages)
 raw_response = output[0]["generated_text"][-1]["content"].strip()
 print("Raw response:", raw_response)

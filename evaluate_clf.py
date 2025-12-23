@@ -18,7 +18,7 @@ from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from tqdm.auto import tqdm
 import wandb
 
-from data_loader import get_dev_data, get_test_data, LABEL_TO_ID, ID_TO_LABEL
+from data_loader import load_dataset, format_input_with_context, LABEL_TO_ID, ID_TO_LABEL
 
 # Device
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -186,11 +186,10 @@ def load_model():
     return model, tokenizer
 
 
-def predict(model, tokenizer, source_text, reply_text, max_length=128):
+def predict(model, tokenizer, input_text, max_length=256):
     """Make a single prediction."""
     encoding = tokenizer(
-        source_text,
-        reply_text,
+        input_text,
         truncation=True,
         max_length=max_length,
         padding='max_length',
@@ -213,20 +212,21 @@ def predict(model, tokenizer, source_text, reply_text, max_length=128):
     }
 
 
-def evaluate_on_dataset(model, tokenizer, df, max_length=128, desc="Evaluating"):
+def evaluate_on_dataset(model, tokenizer, df, full_df, max_length=256, desc="Evaluating"):
     """Evaluate model on a dataset."""
     predictions = []
     labels = []
     
     for _, row in tqdm(df.iterrows(), total=len(df), desc=desc):
-        result = predict(model, tokenizer, row['source_text'], row['reply_text'], max_length)
+        input_text = format_input_with_context(row, full_df, use_features=True, use_context=True)
+        result = predict(model, tokenizer, input_text, max_length)
         predictions.append(LABEL_TO_ID[result['prediction']])
         labels.append(row['label'])
     
     return predictions, labels
 
 
-def show_example_predictions(model, tokenizer, df, num_examples=10):
+def show_example_predictions(model, tokenizer, df, full_df, num_examples=10):
     """Show example predictions with their ground truth."""
     print("\n" + "=" * 70)
     print("EXAMPLE PREDICTIONS")
@@ -242,11 +242,11 @@ def show_example_predictions(model, tokenizer, df, num_examples=10):
     
     for i, (_, row) in enumerate(examples.iterrows()):
         print(f"\n--- Example {i+1} ---")
-        print(f"Source: {row['source_text'][:150]}...")
-        print(f"Reply:  {row['reply_text'][:150]}...")
+        print(f"Text: {row['text'][:150]}...")
         print(f"Ground Truth: {row['label_text'].upper()}")
         
-        result = predict(model, tokenizer, row['source_text'], row['reply_text'])
+        input_text = format_input_with_context(row, full_df, use_features=True, use_context=True)
+        result = predict(model, tokenizer, input_text)
         
         is_correct = result['prediction'] == row['label_text']
         status = "✅" if is_correct else "❌"
@@ -264,12 +264,12 @@ def full_evaluation(model, tokenizer):
     print("FULL EVALUATION ON DEV SET")
     print("=" * 70)
     
-    dev_df = get_dev_data()
+    _, dev_df, _ = load_dataset()
     print(f"Dev set size: {len(dev_df)}")
     print(f"Class distribution:")
     print(dev_df['label_text'].value_counts())
     
-    predictions, labels = evaluate_on_dataset(model, tokenizer, dev_df, desc="Dev set")
+    predictions, labels = evaluate_on_dataset(model, tokenizer, dev_df, dev_df, desc="Dev set")
     
     # Classification report
     print("\n" + "-" * 70)
@@ -421,10 +421,10 @@ if __name__ == "__main__":
         model, tokenizer = load_model()
         
         # Get dev data for examples
-        dev_df = get_dev_data()
+        _, dev_df, _ = load_dataset()
         
         # Show example predictions
-        show_example_predictions(model, tokenizer, dev_df, num_examples=10)
+        show_example_predictions(model, tokenizer, dev_df, dev_df, num_examples=10)
         
         # Full evaluation
         macro_f1, predictions, labels = full_evaluation(model, tokenizer)
