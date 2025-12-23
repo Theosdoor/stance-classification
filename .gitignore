@@ -4,6 +4,10 @@ data/
 wandb/
 .vscode/
 
+/downloaded_data/*
+!/downloaded_data/README.md
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
