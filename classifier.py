@@ -91,6 +91,8 @@ DEFAULT_CONFIG = {
     "lora_alpha": LORA_ALPHA,
     "use_context": True,             # Include context chain in input
     "use_features": True,            # Include features in input
+    "loss_type": "weighted_ce",      # "weighted_ce" or "focal"
+    "focal_gamma": 2.0,              # Focal loss gamma (only used if loss_type="focal")
 }
 
 # Device
@@ -184,6 +186,34 @@ def compute_class_weights(train_df):
         weights.append(weight)
     
     return torch.tensor(weights, dtype=torch.float32)
+
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for multi-class classification.
+    
+    Focal loss down-weights easy examples and focuses on hard ones.
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    
+    Args:
+        weight: Class weights for imbalance (like CE weight)
+        gamma: Focusing parameter. Higher = more focus on hard examples.
+               gamma=0 is equivalent to weighted cross-entropy.
+               Typical values: 1.0, 2.0, 5.0
+    """
+    
+    def __init__(self, weight=None, gamma=2.0):
+        super().__init__()
+        self.weight = weight
+        self.gamma = gamma
+        
+    def forward(self, inputs, targets):
+        ce_loss = nn.functional.cross_entropy(
+            inputs, targets, weight=self.weight, reduction='none'
+        )
+        pt = torch.exp(-ce_loss)  # p_t = probability of correct class
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        return focal_loss.mean()
 
 
 def create_model(config):
@@ -398,8 +428,15 @@ def train(config=None):
             num_training_steps=total_steps
         )
         
-        # Weighted cross-entropy loss for class imbalance TODO use focal loss instead
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        # Loss function - weighted CE or focal loss for class imbalance
+        loss_type = config.get("loss_type", "weighted_ce")
+        if loss_type == "focal":
+            focal_gamma = config.get("focal_gamma", 2.0)
+            criterion = FocalLoss(weight=class_weights, gamma=focal_gamma)
+            print(f"Using Focal Loss (gamma={focal_gamma})")
+        else:
+            criterion = nn.CrossEntropyLoss(weight=class_weights)
+            print("Using Weighted Cross-Entropy Loss")
         
         # Training loop
         best_f1 = 0
