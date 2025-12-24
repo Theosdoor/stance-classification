@@ -37,7 +37,8 @@ CLASSIFIER_NAME = "stance-classifier"
 # Model options
 MODEL_OPTIONS = {
     "deberta": "microsoft/deberta-v3-base",
-    "bertweet": "vinai/bertweet-base",
+    # "bertweet": "vinai/bertweet-base",
+    "bertweet-large": "vinai/bertweet-large", # has 512 max tokens rather than 128
 }
 
 # Model-specific max sequence lengths
@@ -73,11 +74,11 @@ LORA_DROPOUT = 0.1
 
 # Training defaults (can be overridden by W&B sweep)
 DEFAULT_CONFIG = {
-    "model_name": "deberta",         # "deberta" or "bertweet"
-    "lora_targets": "attention",     # "minimal", "attention", or "all_linear"
+    "model_name": "bertweet-large",
+    "lora_targets": "all_linear",     # "minimal", "attention", or "all_linear"
     "learning_rate": 2e-5,
     "batch_size": 16,
-    "num_epochs": 10,
+    "num_epochs": 20,
     "warmup_ratio": 0.1,
     "weight_decay": 0.01,
     "lora_r": LORA_R,

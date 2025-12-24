@@ -1,6 +1,10 @@
 # W&B Sweep Configuration for Stance Classifier
 # Usage: wandb sweep sweep.yaml
 #        wandb agent <sweep_id>
+#
+# Sweep v2: Refined based on previous sweep results
+# - Best configs used lr=5e-05, bs=8, lora_r=32, lora_alpha=64, attention targets
+# - Now using BERTweet normalization preprocessing
 
 project: NLP_cswk
 entity: theo-farrell99-durham-university
@@ -18,20 +22,20 @@ command:
 
 parameters:
   model_name:
-    values: ["deberta", "bertweet"]
+    value: "bertweet-large"
   lora_targets:
-    values: ["minimal", "attention", "all_linear"]
+    values: ["attention", "all_linear"]  # Dropped minimal - underperforms
   learning_rate:
-    values: [0.00001, 0.00002, 0.00003, 0.00005]
+    values: [0.00004, 0.00005, 0.00006]  # Narrowed around best (5e-05)
   batch_size:
-    values: [8, 16]
+    value: 8  # Fixed - clear winner over 16
   num_epochs:
     value: 20
   warmup_ratio:
-    values: [0.0, 0.1, 0.2]
+    values: [0.15, 0.2, 0.25]  # Narrowed around best (0.2)
   weight_decay:
-    values: [0.0, 0.01, 0.1]
+    values: [0.01, 0.05, 0.1]  # Dropped 0.0
   lora_r:
-    values: [8, 16, 32]
+    values: [32, 48, 64]  # Higher ranks - 32 was best
   lora_alpha:
-    values: [16, 32, 64]
+    values: [64, 96, 128]  # Higher alphas - maintain ~2x ratio to r

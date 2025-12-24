@@ -411,6 +411,76 @@ def format_feature_string(features, keys=None):
     return ','.join(parts) if parts else 'none'
 
 
+# ----- tweet normalisation (https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py) ----- #
+# (needs to be same as used in berTweet pretraining)
+
+from emoji import demojize
+import nltk
+from nltk.tokenize import TweetTokenizer
+nltk.download('punkt')
+
+# Tweet tokenizer for BERTweet normalization
+_tweet_tokenizer = TweetTokenizer()
+
+def _normalise_token(token):
+    """Normalize a single token following BERTweet preprocessing."""
+    lowercased_token = token.lower()
+    if token.startswith("@"):
+        return "@USER"
+    elif lowercased_token.startswith("http") or lowercased_token.startswith("www"):
+        return "HTTPURL"
+    elif len(token) == 1:
+        return demojize(token)
+    else:
+        if token == "'":
+            return "'"
+        elif token == "…":
+            return "..."
+        else:
+            return token
+
+
+def normalise_tweet(tweet):
+    """
+    BertTweet normalisation
+    
+    - Converts emojis to text descriptions using emoji library
+    - Replaces user mentions (@username) with @USER
+    - Replaces URLs with HTTPURL
+    - Handles contractions and special characters
+    """
+    if not tweet:
+        return tweet
+    
+    tokens = _tweet_tokenizer.tokenize(tweet.replace("'", "'").replace("…", "..."))
+    norm_tweet = " ".join([_normalise_token(token) for token in tokens])
+
+    norm_tweet = (
+        norm_tweet.replace("cannot ", "can not ")
+        .replace("n't ", " n't ")
+        .replace("n 't ", " n't ")
+        .replace("ca n't", "can't")
+        .replace("ai n't", "ain't")
+    )
+    norm_tweet = (
+        norm_tweet.replace("'m ", " 'm ")
+        .replace("'re ", " 're ")
+        .replace("'s ", " 's ")
+        .replace("'ll ", " 'll ")
+        .replace("'d ", " 'd ")
+        .replace("'ve ", " 've ")
+    )
+    norm_tweet = (
+        norm_tweet.replace(" p . m .", "  p.m.")
+        .replace(" p . m ", " p.m ")
+        .replace(" a . m .", " a.m.")
+        .replace(" a . m ", " a.m ")
+    )
+
+    return " ".join(norm_tweet.split())
+
+
+
 def format_input_with_context(row, df, use_features=True, use_context=True, max_tokens=None, tokenizer=None):
     """
     Format input for classifier with context and features.
@@ -419,10 +489,10 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     
     If max_tokens and tokenizer are provided, truncates context first if needed.
     """
-    target_text = row['text']
+    target_text = normalise_tweet(row['text'])
     source_id = row['source_id']
     parent_id = row['parent_id']
-    context_chain = row.get('context_chain', [])
+    context_chain = [normalise_tweet(ctx) for ctx in row.get('context_chain', [])]
     features = row.get('features', {})
     
     # Build core parts (source, parent, target) - these are never truncated
@@ -432,7 +502,7 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     if source_id is not None:
         source_row = df[df['tweet_id'] == source_id]
         if len(source_row) > 0:
-            source_text = source_row.iloc[0]['text']
+            source_text = normalise_tweet(source_row.iloc[0]['text'])
             core_parts.append(f"[SRC] {source_text}")
             if use_features:
                 core_parts.append(f"[SRC_F] {format_feature_string(source_row.iloc[0].get('features', {}))}")
@@ -442,7 +512,7 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     if parent_id is not None:
         parent_row = df[df['tweet_id'] == parent_id]
         if len(parent_row) > 0:
-            parent_text = parent_row.iloc[0]['text']
+            parent_text = normalise_tweet(parent_row.iloc[0]['text'])
             parent_parts.append(f"[PARENT] {parent_text}")
             if use_features:
                 parent_parts.append(f"[PARENT_F] {format_feature_string(parent_row.iloc[0].get('features', {}))}")
@@ -486,9 +556,7 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     return ' '.join(all_parts)
 
 
-# ============================================================================
-# Legacy Functions (for backward compatibility)
-# ============================================================================
+# get specific datasets
 
 def get_train_data():
     """Load training data."""

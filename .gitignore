@@ -3,6 +3,7 @@ practicals/
 data/
 wandb/
 .vscode/
+saved_data/
 
 /downloaded_data/*
 !/downloaded_data/README.md
