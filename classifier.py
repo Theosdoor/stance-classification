@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import autocast, GradScaler
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
 from transformers import (
     AutoTokenizer, 
@@ -93,6 +94,7 @@ DEFAULT_CONFIG = {
     "use_features": True,            # Include features in input
     "loss_type": "weighted_ce",      # "weighted_ce" or "focal"
     "focal_gamma": 2.0,              # Focal loss gamma (only used if loss_type="focal")
+    "early_stopping_patience": 3,    # Stop if no improvement for N epochs
 }
 
 # Device
@@ -261,12 +263,13 @@ def create_model(config):
 # Training
 # ============================================================================
 
-def train_epoch(model, dataloader, optimizer, scheduler, criterion):
-    """Train for one epoch."""
+def train_epoch(model, dataloader, optimizer, scheduler, criterion, scaler=None):
+    """Train for one epoch with optional mixed precision."""
     model.train()
     total_loss = 0
     all_preds = []
     all_labels = []
+    use_amp = scaler is not None
     
     progress_bar = tqdm(dataloader, desc="Training")
     for batch in progress_bar:
@@ -276,19 +279,28 @@ def train_epoch(model, dataloader, optimizer, scheduler, criterion):
         
         optimizer.zero_grad()
         
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels
-        )
+        # Mixed precision forward pass
+        with autocast(enabled=use_amp):
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
+            logits = outputs.logits
+            loss = criterion(logits, labels)
         
-        # Use weighted loss
-        logits = outputs.logits
-        loss = criterion(logits, labels)
+        # Backward with scaler if using AMP
+        if use_amp:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
         
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
         scheduler.step()
         
         total_loss += loss.item()
@@ -438,6 +450,16 @@ def train(config=None):
             criterion = nn.CrossEntropyLoss(weight=class_weights)
             print("Using Weighted Cross-Entropy Loss")
         
+        # Mixed precision scaler for faster training (CUDA only)
+        use_amp = DEVICE.type == "cuda"
+        scaler = GradScaler() if use_amp else None
+        if use_amp:
+            print("Using mixed precision training (fp16)")
+        
+        # Early stopping setup
+        patience = config.get("early_stopping_patience", 3)
+        epochs_without_improvement = 0
+        
         # Training loop
         best_f1 = 0
         best_epoch = 0
@@ -447,7 +469,7 @@ def train(config=None):
             
             # Train
             train_loss, train_f1 = train_epoch(
-                model, train_loader, optimizer, scheduler, criterion
+                model, train_loader, optimizer, scheduler, criterion, scaler
             )
             
             # Evaluate
@@ -472,6 +494,7 @@ def train(config=None):
             if val_f1 > best_f1:
                 best_f1 = val_f1
                 best_epoch = epoch + 1
+                epochs_without_improvement = 0
                 
                 # Save checkpoint
                 checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
@@ -490,6 +513,13 @@ def train(config=None):
                         class_names=list(LABEL_TO_ID.keys())
                     )
                 })
+            else:
+                epochs_without_improvement += 1
+                print(f"No improvement for {epochs_without_improvement} epoch(s)")
+                
+                if epochs_without_improvement >= patience:
+                    print(f"\nEarly stopping triggered after {epoch + 1} epochs")
+                    break
         
         # Final report
         print(f"\n{'='*60}")
