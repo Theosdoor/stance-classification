@@ -5,6 +5,7 @@
 # Sweep v2: Refined based on previous sweep results
 # - Best configs used lr=5e-05, bs=8, lora_r=32, lora_alpha=64, attention targets
 # - Now using BERTweet normalization preprocessing
+# - Reduced lora_r to avoid OOM on shared GPU
 
 project: NLP_cswk
 entity: theo-farrell99-durham-university
@@ -36,6 +37,6 @@ parameters:
   weight_decay:
     values: [0.01, 0.05, 0.1]  # Dropped 0.0
   lora_r:
-    values: [32, 48, 64]  # Higher ranks - 32 was best
+    values: [16, 24, 32]  # Reduced from [32, 48, 64] to avoid OOM
   lora_alpha:
-    values: [64, 96, 128]  # Higher alphas - maintain ~2x ratio to r
+    values: [32, 48, 64]  # Reduced from [64, 96, 128] - maintain ~2x ratio to r

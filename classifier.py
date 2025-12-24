@@ -42,11 +42,11 @@ MODEL_OPTIONS = {
 }
 
 # Model-specific max sequence lengths
-# BERTweet-large supports 512 tokens, base version only 128
+# Note: bertweet-large supports 512 but we use 256 to balance context vs GPU memory
 MAX_LENGTH_OPTIONS = {
     "deberta": 256,
     "bertweet": 128,
-    "bertweet-large": 512,
+    "bertweet-large": 256,
 }
 
 # LoRA target module presets per model
