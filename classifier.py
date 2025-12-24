@@ -42,10 +42,11 @@ MODEL_OPTIONS = {
 }
 
 # Model-specific max sequence lengths
-# BERTweet only supports 128 tokens (position embeddings limit)
+# BERTweet-large supports 512 tokens, base version only 128
 MAX_LENGTH_OPTIONS = {
     "deberta": 256,
     "bertweet": 128,
+    "bertweet-large": 512,
 }
 
 # LoRA target module presets per model
@@ -59,6 +60,11 @@ LORA_TARGET_PRESETS = {
         "all_linear": ["query_proj", "key_proj", "value_proj", "dense"],
     },
     "bertweet": {
+        "minimal": ["query", "value"],
+        "attention": ["query", "key", "value"],
+        "all_linear": ["query", "key", "value", "dense"],
+    },
+    "bertweet-large": {
         "minimal": ["query", "value"],
         "attention": ["query", "key", "value"],
         "all_linear": ["query", "key", "value", "dense"],
