@@ -533,12 +533,35 @@ def train(config=None):
             "best_epoch": best_epoch
         })
         
-        # Print classification report for best epoch
+        # Print and log classification report for report
         print("\nClassification Report (last epoch):")
+        report = classification_report(
+            val_labels, val_preds, 
+            target_names=list(LABEL_TO_ID.keys()),
+            output_dict=True
+        )
         print(classification_report(
             val_labels, val_preds, 
             target_names=list(LABEL_TO_ID.keys())
         ))
+        
+        # Log per-class metrics to W&B for report
+        for class_name in LABEL_TO_ID.keys():
+            if class_name in report:
+                wandb.log({
+                    f"final/{class_name}_precision": report[class_name]['precision'],
+                    f"final/{class_name}_recall": report[class_name]['recall'],
+                    f"final/{class_name}_f1": report[class_name]['f1-score'],
+                    f"final/{class_name}_support": report[class_name]['support'],
+                })
+        
+        # Log macro and weighted averages
+        wandb.log({
+            "final/macro_precision": report['macro avg']['precision'],
+            "final/macro_recall": report['macro avg']['recall'],
+            "final/macro_f1": report['macro avg']['f1-score'],
+            "final/weighted_f1": report['weighted avg']['f1-score'],
+        })
         
         return best_f1
 
