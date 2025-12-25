@@ -1,0 +1,5 @@
+,Pred:support,Pred:deny,Pred:query,Pred:comment
+True:support,40,13,4,37
+True:deny,3,36,1,31
+True:query,0,3,88,15
+True:comment,44,61,39,634
