@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
 from transformers import (
     AutoTokenizer, 
@@ -280,7 +280,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, criterion, scaler=None)
         optimizer.zero_grad()
         
         # Mixed precision forward pass
-        with autocast(enabled=use_amp):
+        with autocast(device_type=DEVICE.type, enabled=use_amp):
             outputs = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -452,7 +452,7 @@ def train(config=None):
         
         # Mixed precision scaler for faster training (CUDA only)
         use_amp = DEVICE.type == "cuda"
-        scaler = GradScaler() if use_amp else None
+        scaler = GradScaler(device=DEVICE.type) if use_amp else None
         if use_amp:
             print("Using mixed precision training (fp16)")
         
