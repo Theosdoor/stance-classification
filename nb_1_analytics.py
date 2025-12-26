@@ -10,6 +10,7 @@ from wordcloud import WordCloud
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 import spacy
+import pandas as pd
 
 from data_loader import get_train_data, get_dev_data, get_test_data, get_all_data
 
@@ -150,83 +151,68 @@ def plot_ngrams_by_stance(unigrams, bigrams, top_n=10, save_dir=SAVE_DIR):
 
 # ----- 1a comparing token dist -----
 
-def compare_stance_vs_comment(df):
-    """Compare token distributions: Stance (S/D/Q) vs Non-stance (Comment)."""
-    stance_reply = Counter()
-    comment_reply = Counter()
-    counts = {'stance': 0, 'comment': 0}
+def compare_source_vs_reply_distributions(df):
+    # 4 categories: source_stance, source_non_stance, reply_stance, reply_non_stance
+    distributions = {
+        'source_stance': Counter(),
+        'source_non_stance': Counter(),
+        'reply_stance': Counter(),
+        'reply_non_stance': Counter(),
+    }
+    counts = {k: 0 for k in distributions}
     
     def process_row(row):
         tokens = tokenize(row['text'])
-        if row['label_text'] in ['support', 'deny', 'query']:
-            stance_reply.update(tokens)
-            counts['stance'] += 1
+        is_source = row['source_id'] is None or (isinstance(row['source_id'], float) and pd.isna(row['source_id']))
+        is_stance = row['label_text'] != 'comment'
+        
+        if is_source and is_stance:
+            key = 'source_stance'
+        elif is_source and not is_stance:
+            key = 'source_non_stance'
+        elif not is_source and is_stance:
+            key = 'reply_stance'
         else:
-            comment_reply.update(tokens)
-            counts['comment'] += 1
+            key = 'reply_non_stance'
+        
+        distributions[key].update(tokens)
+        counts[key] += 1
     
     df.apply(process_row, axis=1)
-    return {
-        'stance': {'reply': stance_reply, 'count': counts['stance']},
-        'comment': {'reply': comment_reply, 'count': counts['comment']}
-    }
+    return {k: {'tokens': distributions[k], 'count': counts[k]} for k in distributions}
 
-def plot_distribution_comparison(distributions, n=15, save_dir=SAVE_DIR):
-    """Plot comparison of token distributions using seaborn."""
-    stance = distributions['stance']
-    comment = distributions['comment']
+def plot_source_vs_reply_distributions(distributions, n=15, save_dir=SAVE_DIR):
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    plot_configs = [
+        # (row, col, category, title, palette)
+        (0, 0, 'source_stance', 'SOURCE Text - Stance (S/D/Q)', 'rocket'),
+        (0, 1, 'source_non_stance', 'SOURCE Text - Non-stance (C)', 'mako'),
+        (1, 0, 'reply_stance', 'REPLY Text - Stance (S/D/Q)', 'rocket'),
+        (1, 1, 'reply_non_stance', 'REPLY Text - Non-stance (C)', 'mako'),
+    ]
     
-    # Normalize for fair comparison
-    stance_total = sum(stance['reply'].values())
-    comment_total = sum(comment['reply'].values())
+    for row, col, key, title, palette in plot_configs:
+        ax = axes[row, col]
+        data = distributions[key]
+        tokens_counter = data['tokens']
+        count = data['count']
+        
+        # top n tokens by frequency
+        top_tokens = tokens_counter.most_common(n)
+        
+        if top_tokens:
+            tokens, freqs = zip(*top_tokens)
+            sns.barplot(x=list(freqs), y=list(tokens), ax=ax,
+                       hue=list(tokens), palette=palette, legend=False)
+            ax.set_xlabel('Token Count')
+            ax.set_ylabel('Token')
+            ax.set_title(f'{title}\n(n={count} tweets)')
+        else:
+            print(f'no data for {key}!')
     
-    # Find distinctive tokens for stance
-    stance_distinctive = []
-    for token, count in stance['reply'].most_common(100):
-        stance_freq = count / stance_total
-        comment_freq = comment['reply'].get(token, 1) / comment_total
-        ratio = stance_freq / comment_freq
-        if ratio > 1.5:
-            stance_distinctive.append((token, ratio, count))
-    stance_distinctive = sorted(stance_distinctive, key=lambda x: -x[1])[:n]
-    
-    # Find distinctive tokens for comment
-    comment_distinctive = []
-    for token, count in comment['reply'].most_common(100):
-        comment_freq = count / comment_total
-        stance_freq = stance['reply'].get(token, 1) / stance_total
-        ratio = comment_freq / stance_freq
-        if ratio > 1.5:
-            comment_distinctive.append((token, ratio, count))
-    comment_distinctive = sorted(comment_distinctive, key=lambda x: -x[1])[:n]
-    
-    # Create figure with two subplots
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Plot stance-distinctive tokens
-    if stance_distinctive:
-        tokens, ratios, counts = zip(*stance_distinctive)
-        sns.barplot(x=list(ratios), y=list(tokens), ax=axes[0], 
-                   hue=list(tokens), palette='Blues_r', legend=False)
-        axes[0].set_xlabel('Frequency Ratio (Stance / Comment)')
-        axes[0].set_ylabel('Token')
-        axes[0].set_title(f'Tokens MORE Common in STANCE (S/D/Q) Replies\n(Sample count: {stance["count"]})')
-        axes[0].axvline(x=1.0, color='gray', linestyle='--', alpha=0.7)
-    
-    # Plot comment-distinctive tokens
-    if comment_distinctive:
-        tokens, ratios, counts = zip(*comment_distinctive)
-        sns.barplot(x=list(ratios), y=list(tokens), ax=axes[1],
-                   hue=list(tokens), palette='Oranges_r', legend=False)
-        axes[1].set_xlabel('Frequency Ratio (Comment / Stance)')
-        axes[1].set_ylabel('Token')
-        axes[1].set_title(f'Tokens MORE Common in COMMENT Replies\n(Sample count: {comment["count"]})')
-        axes[1].axvline(x=1.0, color='gray', linestyle='--', alpha=0.7)
-    
-    plt.suptitle('Token Distribution: Stance (S/D/Q) vs Non-Stance (Comment)', fontsize=14)
+    plt.suptitle('Token Distributions', fontsize=14)
     plt.tight_layout()
-    plt.savefig(save_dir + 'token_distribution_comparison.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: {save_dir}token_distribution_comparison.png")
+    if save_dir: plt.savefig(save_dir + 'token_dist.png', dpi=150, bbox_inches='tight')
     plt.show()
 
 
@@ -235,7 +221,7 @@ def lda_tokenize(text):
     return ' '.join(tokenize(text)) # string for countvectorizer
 
 def run_lda(texts, n_topics=5):
-    vectorizer = CountVectorizer(ngram_range=(1, 3)) # alr remove stopwords in tokenisation
+    vectorizer = CountVectorizer(ngram_range=(1, 3)) # already remove stopwords in tokenisation
     doc_term_matrix = vectorizer.fit_transform(texts)
     
     lda = LatentDirichletAllocation(n_components=n_topics, max_iter=20, random_state=RAND_SEED)
@@ -289,8 +275,8 @@ def run_lda_analysis(df, n_topics=5):
     print(f"Comment samples: {len(comment_df)}")
     
     # Preprocess
-    stance_texts = [lda_tokenize(text) for text in stance_df['reply_text']]
-    comment_texts = [lda_tokenize(text) for text in comment_df['reply_text']]
+    stance_texts = [lda_tokenize(text) for text in stance_df['text']]
+    comment_texts = [lda_tokenize(text) for text in comment_df['text']]
     
     # Run LDA on stance replies
     print("\nRunning LDA on Stance (S/D/Q) replies...")
@@ -317,9 +303,9 @@ if __name__ == '__main__':
     unigrams, bigrams = get_ngrams_by_stance(all_df)
     plot_ngrams_by_stance(unigrams, bigrams, top_n=10)
     
-    print("\nComparing stance vs non-stance token distributions...")
-    distributions = compare_stance_vs_comment(all_df)
-    plot_distribution_comparison(distributions, n=15)
+    print("\nComparing source vs reply token distributions (stance vs comment)...")
+    distributions = compare_source_vs_reply_distributions(all_df)
+    plot_source_vs_reply_distributions(distributions, n=15)
     
     print("\n" + "="*80)
     print("Part (b): LDA Topic Modeling")

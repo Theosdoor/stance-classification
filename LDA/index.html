@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LDA Topic Analysis - SemEval Rumor Stance</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #e7e9ea;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 2.5rem;
+            text-align: center;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #00d9ff, #ff00d9);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle {
+            text-align: center;
+            color: #71767b;
+            margin-bottom: 3rem;
+            font-size: 1.1rem;
+        }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 3rem;
+        }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 32px;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-4px);
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.2);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .card h2 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .card.stance h2 { color: #00ba7c; }
+        .card.comment h2 { color: #ff7a00; }
+        .card p {
+            color: #71767b;
+            line-height: 1.6;
+        }
+        .card .arrow {
+            margin-top: 1rem;
+            font-size: 1.5rem;
+        }
+        .info {
+            background: rgba(29, 155, 240, 0.1);
+            border: 1px solid rgba(29, 155, 240, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 2rem;
+        }
+        .info h3 {
+            color: #1d9bf0;
+            margin-bottom: 0.5rem;
+        }
+        .back-link {
+            display: inline-block;
+            color: #1d9bf0;
+            text-decoration: none;
+            margin-top: 2rem;
+        }
+        .back-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LDA Topic Analysis</h1>
+        <p class="subtitle">Interactive visualization of topics in SemEval 2017 Rumor Stance dataset</p>
+        
+        <div class="info">
+            <h3>About this visualization</h3>
+            <p>These interactive visualizations use Latent Dirichlet Allocation (LDA) to discover hidden topics in tweets. 
+            Each circle represents a topic, and you can click on them to see the most relevant words. 
+            The bars on the right show word frequencies within and across topics.</p>
+        </div>
+        
+        <div class="cards">
+            <a href="stance/" class="card stance">
+                <h2>Stance Topics (S/D/Q)</h2>
+                <p>Topics discovered in tweets that express a stance: Support, Deny, or Query towards rumor claims.</p>
+                <div class="arrow">→</div>
+            </a>
+            <a href="comment/" class="card comment">
+                <h2>Comment Topics</h2>
+                <p>Topics discovered in neutral comment tweets that neither support, deny, nor query the rumor.</p>
+                <div class="arrow">→</div>
+            </a>
+        </div>
+        
+        <a href="../" class="back-link">← Back to main site</a>
+    </div>
+</body>
+</html>
