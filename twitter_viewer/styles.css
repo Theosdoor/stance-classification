@@ -377,6 +377,117 @@ body {
     text-decoration: underline;
 }
 
+/* Context Section */
+.context-section {
+    margin-left: 60px;
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.context-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    width: 100%;
+}
+
+.context-toggle:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--text-muted);
+}
+
+.context-toggle.expanded {
+    background: var(--bg-tertiary);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.context-icon {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    flex-shrink: 0;
+}
+
+.wikipedia-toggle .context-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.wikipedia-logo {
+    object-fit: contain;
+}
+
+.wikipedia-toggle {
+    color: var(--accent-blue);
+}
+
+.urls-toggle {
+    color: var(--accent-orange);
+}
+
+.toggle-arrow {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.context-toggle.expanded .toggle-arrow {
+    transform: rotate(180deg);
+}
+
+.context-content {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0 0 var(--border-radius-sm) var(--border-radius-sm);
+    padding: 12px 14px;
+    margin-top: -6px;
+}
+
+.context-text {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+}
+
+.context-urls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.context-url {
+    font-size: 0.8rem;
+    color: var(--accent-blue);
+    text-decoration: none;
+    word-break: break-all;
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    transition: background 0.15s ease;
+}
+
+.context-url:hover {
+    background: var(--bg-hover);
+    text-decoration: underline;
+}
+
 /* Tweet Meta */
 .tweet-meta {
     display: flex;

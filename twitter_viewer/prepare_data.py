@@ -70,6 +70,96 @@ def extract_tweet_info(tweet_data):
     }
 
 
+def load_context_data(thread_path):
+    """Load context data (urls.dat and wikipedia) for a thread."""
+    context = {}
+    
+    # Load urls.dat - contains MD5 hash -> URL mappings
+    urls_dat_path = os.path.join(thread_path, 'urls.dat')
+    if os.path.exists(urls_dat_path):
+        urls = []
+        try:
+            with open(urls_dat_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split('\t')
+                    if len(parts) >= 2:
+                        urls.append({
+                            'hash': parts[0],
+                            'short_url': parts[1] if len(parts) > 1 else '',
+                            'expanded_url': parts[2] if len(parts) > 2 else parts[1]
+                        })
+            if urls:
+                context['urls'] = urls
+        except Exception as e:
+            print(f"Error loading urls.dat from {thread_path}: {e}")
+    
+    # Load wikipedia context file
+    wiki_path = os.path.join(thread_path, 'context', 'wikipedia')
+    if os.path.exists(wiki_path):
+        try:
+            with open(wiki_path, 'r', encoding='utf-8') as f:
+                wiki_content = f.read()
+                cleaned = clean_wikitext(wiki_content)
+                if cleaned and len(cleaned) > 50:  # Only include if meaningful content
+                    context['wikipedia'] = cleaned[:600]  # Slightly longer limit for cleaned text
+        except Exception as e:
+            print(f"Error loading wikipedia from {thread_path}: {e}")
+    
+    return context if context else None
+
+
+def clean_wikitext(text):
+    """Clean WikiText markup to produce readable plain text."""
+    import re
+    
+    # Remove HTML comments
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+    
+    # Remove templates like {{...}} (including nested)
+    # Process multiple times for nested templates
+    for _ in range(5):
+        text = re.sub(r'\{\{[^{}]*\}\}', '', text)
+    
+    # Remove remaining unmatched {{ or }}
+    text = re.sub(r'\{\{|\}\}', '', text)
+    
+    # Convert [[link|display]] to display
+    text = re.sub(r'\[\[([^|\]]*\|)?([^\]]+)\]\]', r'\2', text)
+    
+    # Remove file/image links
+    text = re.sub(r'\[\[(?:File|Image):[^\]]+\]\]', '', text, flags=re.IGNORECASE)
+    
+    # Remove external links [url text] -> text
+    text = re.sub(r'\[https?://[^\s\]]+ ([^\]]+)\]', r'\1', text)
+    text = re.sub(r'\[https?://[^\]]+\]', '', text)
+    
+    # Remove references <ref>...</ref>
+    text = re.sub(r'<ref[^>]*>.*?</ref>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<ref[^/>]*/>', '', text, flags=re.IGNORECASE)
+    
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Remove bold/italic wiki markup
+    text = re.sub(r"'''?", '', text)
+    
+    # Remove section headers
+    text = re.sub(r'==+[^=]+=+', '', text)
+    
+    # Remove category links
+    text = re.sub(r'\[\[Category:[^\]]+\]\]', '', text, flags=re.IGNORECASE)
+    
+    # Clean up whitespace
+    text = re.sub(r'\n\s*\n', '\n', text)
+    text = re.sub(r'  +', ' ', text)
+    text = text.strip()
+    
+    # Get first meaningful paragraph(s)
+    lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 30]
+    
+    return ' '.join(lines[:3]) if lines else ''
+
+
 def build_reply_tree(structure, replies_dir, labels):
     """Build nested reply structure from structure.json."""
     replies = []
@@ -124,6 +214,11 @@ def process_thread(thread_path, labels):
             source_info['replies'] = []
     else:
         source_info['replies'] = []
+    
+    # Load context data for this thread
+    context = load_context_data(thread_path)
+    if context:
+        source_info['context'] = context
     
     return source_info
 

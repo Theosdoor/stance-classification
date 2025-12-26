@@ -126,9 +126,9 @@ function getTopicStats(threads) {
 }
 
 /**
- * Update legend with stance counts
+ * Update legend with stance counts and percentages
  */
-function updateLegend(stanceCounts) {
+function updateLegend(stanceCounts, totalTweets) {
     const legendItems = document.querySelectorAll('.legend-item');
     legendItems.forEach(item => {
         const badge = item.querySelector('.stance-badge');
@@ -147,7 +147,9 @@ function updateLegend(stanceCounts) {
             countSpan.className = 'stance-count';
             item.appendChild(countSpan);
         }
-        countSpan.textContent = count;
+
+        const percentage = totalTweets > 0 ? Math.round((count / totalTweets) * 100) : 0;
+        countSpan.textContent = `${count} (${percentage}%)`;
     });
 }
 
@@ -170,7 +172,7 @@ function selectTopic(topicKey) {
     threadCount.textContent = `${topic.thread_count} threads • ${stats.totalTweets} tweets`;
 
     // Update legend with stance counts
-    updateLegend(stats.stanceCounts);
+    updateLegend(stats.stanceCounts, stats.totalTweets);
 
     renderThreads(topic.threads);
 }
@@ -197,6 +199,68 @@ function renderThreads(threads) {
         const threadElement = renderThread(thread);
         tweetsContainer.appendChild(threadElement);
     });
+}
+
+/**
+ * Render context section (Wikipedia and URLs) as collapsible dropdowns
+ */
+function renderContext(context) {
+    if (!context) return '';
+
+    let html = '<div class="context-section">';
+
+    // Wikipedia context - collapsible
+    if (context.wikipedia) {
+        html += `
+            <button class="context-toggle wikipedia-toggle" onclick="toggleContext(this)">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/6/61/Wikipedia-logo-transparent.png" class="context-icon wikipedia-logo" alt="Wikipedia">
+                <span>Wikipedia Context</span>
+                <svg class="toggle-arrow" viewBox="0 0 24 24">
+                    <path d="M12 15.121l-4.879-4.879-1.414 1.414L12 18.007l6.293-6.351-1.414-1.414z"/>
+                </svg>
+            </button>
+            <div class="context-content" style="display: none;">
+                <p class="context-text">${escapeHtml(context.wikipedia)}${context.wikipedia.length >= 495 ? '...' : ''}</p>
+            </div>
+        `;
+    }
+
+    // URLs context - collapsible
+    if (context.urls && context.urls.length > 0) {
+        html += `
+            <button class="context-toggle urls-toggle" onclick="toggleContext(this)">
+                <svg viewBox="0 0 24 24" class="context-icon">
+                    <path d="M11.96 14.945c-.067 0-.136-.01-.203-.027-1.13-.318-2.097-.986-2.795-1.932-.832-1.125-1.176-2.508-.968-3.893s.942-2.605 2.068-3.438l3.53-2.608c2.322-1.716 5.61-1.224 7.33 1.1.83 1.127 1.175 2.51.967 3.895s-.943 2.605-2.07 3.438l-1.48 1.094c-.333.246-.804.175-1.05-.158-.246-.334-.176-.804.158-1.05l1.48-1.095c.803-.592 1.327-1.463 1.476-2.45.148-.988-.098-1.975-.69-2.778-1.225-1.656-3.572-2.01-5.23-.784l-3.53 2.608c-.802.593-1.326 1.464-1.475 2.45-.15.99.097 1.975.69 2.778.498.675 1.187 1.15 1.992 1.377.4.114.633.528.52.928-.092.33-.394.547-.722.547zm7.44-3.94c-.082 0-.165-.018-.242-.054-.35-.164-.504-.583-.34-.933.147-.313.232-.65.252-.994.062-1.045-.362-2.054-1.16-2.762-.253-.224-.282-.61-.059-.863.224-.252.61-.282.863-.058 1.105.977 1.69 2.374 1.603 3.821-.027.475-.144.94-.35 1.382-.118.256-.373.41-.642.41zm-5.74 9.95c-1.126-.317-2.096-.986-2.794-1.932-.832-1.125-1.176-2.508-.968-3.893.209-1.386.943-2.605 2.07-3.438l1.478-1.094c.333-.246.804-.175 1.05.158.246.334.175.804-.158 1.05l-1.48 1.095c-.803.593-1.327 1.464-1.476 2.45-.15.99.098 1.976.69 2.778.5.675 1.187 1.15 1.993 1.377.4.114.633.528.52.928-.092.33-.394.547-.722.547-.07 0-.14-.01-.208-.027z"/>
+                </svg>
+                <span>Referenced URLs (${context.urls.length})</span>
+                <svg class="toggle-arrow" viewBox="0 0 24 24">
+                    <path d="M12 15.121l-4.879-4.879-1.414 1.414L12 18.007l6.293-6.351-1.414-1.414z"/>
+                </svg>
+            </button>
+            <div class="context-content" style="display: none;">
+                <div class="context-urls">
+                    ${context.urls.map(url => `
+                        <a href="${escapeHtml(url.expanded_url)}" target="_blank" rel="noopener noreferrer" class="context-url">
+                            ${escapeHtml(url.expanded_url.length > 80 ? url.expanded_url.substring(0, 80) + '...' : url.expanded_url)}
+                        </a>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    return html;
+}
+
+/**
+ * Toggle context dropdown visibility
+ */
+function toggleContext(btn) {
+    const content = btn.nextElementSibling;
+    const isExpanded = content.style.display !== 'none';
+    content.style.display = isExpanded ? 'none' : 'block';
+    btn.classList.toggle('expanded', !isExpanded);
 }
 
 /**
@@ -260,6 +324,7 @@ function renderThread(tweet, isReply = false) {
                 </button>
             </span>
         </div>
+        ${!isReply && tweet.context ? renderContext(tweet.context) : ''}
     `;
 
     // Add replies if present
