@@ -149,7 +149,7 @@ def build_zero_shot_messages(input_text):
     """Build messages for zero-shot stance classification."""
     return [
         {"role": "system", "content": SYS_PROMPT},
-        {"role": "user", "content": build_prompt(input_text, '')},
+        {"role": "user", "content": build_prompt(input_text)},
     ]
 
 # %%
