@@ -79,6 +79,79 @@ function renderTopicNav() {
 }
 
 /**
+ * Count all tweets in a thread recursively
+ */
+function countTweetsInThread(tweet) {
+    let count = 1; // Count this tweet
+    if (tweet.replies && tweet.replies.length > 0) {
+        tweet.replies.forEach(reply => {
+            count += countTweetsInThread(reply);
+        });
+    }
+    return count;
+}
+
+/**
+ * Count stance occurrences in a thread recursively
+ */
+function countStancesInThread(tweet, counts) {
+    const stance = tweet.stance ? tweet.stance.toLowerCase() : 'comment';
+    if (stance === 'support') counts.support++;
+    else if (stance === 'deny') counts.deny++;
+    else if (stance === 'query') counts.query++;
+    else if (stance === 'source') counts.source++;
+    else counts.comment++;
+
+    if (tweet.replies && tweet.replies.length > 0) {
+        tweet.replies.forEach(reply => {
+            countStancesInThread(reply, counts);
+        });
+    }
+    return counts;
+}
+
+/**
+ * Get statistics for a topic
+ */
+function getTopicStats(threads) {
+    let totalTweets = 0;
+    const stanceCounts = { support: 0, deny: 0, query: 0, comment: 0, source: 0 };
+
+    threads.forEach(thread => {
+        totalTweets += countTweetsInThread(thread);
+        countStancesInThread(thread, stanceCounts);
+    });
+
+    return { totalTweets, stanceCounts };
+}
+
+/**
+ * Update legend with stance counts
+ */
+function updateLegend(stanceCounts) {
+    const legendItems = document.querySelectorAll('.legend-item');
+    legendItems.forEach(item => {
+        const badge = item.querySelector('.stance-badge');
+        if (!badge) return;
+
+        let count = 0;
+        let countSpan = item.querySelector('.stance-count');
+
+        if (badge.classList.contains('support')) count = stanceCounts.support;
+        else if (badge.classList.contains('deny')) count = stanceCounts.deny;
+        else if (badge.classList.contains('query')) count = stanceCounts.query;
+        else if (badge.classList.contains('comment')) count = stanceCounts.comment;
+
+        if (!countSpan) {
+            countSpan = document.createElement('span');
+            countSpan.className = 'stance-count';
+            item.appendChild(countSpan);
+        }
+        countSpan.textContent = count;
+    });
+}
+
+/**
  * Select and display a topic
  */
 function selectTopic(topicKey) {
@@ -91,7 +164,13 @@ function selectTopic(topicKey) {
 
     const topic = data.topics[topicKey];
     topicTitle.textContent = topic.name;
-    threadCount.textContent = `${topic.thread_count} threads`;
+
+    // Calculate stats
+    const stats = getTopicStats(topic.threads || []);
+    threadCount.textContent = `${topic.thread_count} threads • ${stats.totalTweets} tweets`;
+
+    // Update legend with stance counts
+    updateLegend(stats.stanceCounts);
 
     renderThreads(topic.threads);
 }

@@ -159,6 +159,16 @@ body {
     color: var(--text-secondary);
 }
 
+.stance-count {
+    margin-left: auto;
+    background: var(--bg-tertiary);
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
 /* Stance Badges */
 .stance-badge {
     display: inline-flex;
