@@ -23,7 +23,7 @@ import torch
 from datasets import Dataset
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
 from tqdm.auto import tqdm
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer
 
 from data_loader import load_dataset, format_input_with_context
 
@@ -45,10 +45,9 @@ You are an expert in rumour stance analysis on social media.
 
 Your task is to classify the stance of the TARGET tweet towards veracity of the rumour in the SOURCE tweet.
 
-**Input Format:**
-- [SRC] = The source tweet containing the rumour claim
-- [PARENT] = The tweet that the target is directly replying to (if different from source)
-- [TARGET] = The tweet whose stance you must classify
+**Input Structure:**
+The input will be provided as a single string containing labeled segments:
+"[SRC] ... [PARENT] ... [TARGET] ..." (Note: [PARENT] may be omitted if not applicable).
 
 **Classification Labels:**
 - **SUPPORT**: The reply supports the veracity of the source claim
@@ -64,7 +63,7 @@ USER_PROMPT_TEMPLATE = """\
 **Thread Context:**
 {thread_context}
 
-**Task:** Classify the stance of [TARGET] towards [SRC].
+**Task:** Classify the stance of [TARGET] towards the veracity of the rumour in [SRC].
 """
 
 # %%
@@ -132,10 +131,7 @@ def parse_stance_response(text):
 # %%
 # Model loading
 
-def create_pipeline():
-    """Create a text generation pipeline."""
-    print(f"Creating pipeline for: {MODEL_NAME}")
-    
+def create_pipeline():    
     return pipeline(
         "text-generation",
         model=MODEL_NAME,
@@ -169,8 +165,8 @@ def classify_instance(pipe, input_text, mode="zero-shot", examples=None):
 # %%
 # Few-shot example selection
 
-def get_few_shot_examples(df, n_per_class=1):
-    """Select stratified random examples for few-shot prompting."""
+def get_random_stratified_few_shot_examples(df, n_per_class=1):
+    """Select stratified random examples for few-shot prompting (non-deterministic)."""
     examples = []
     
     for label in ['support', 'deny', 'query', 'comment']:
@@ -186,14 +182,295 @@ def get_few_shot_examples(df, n_per_class=1):
     return examples
 
 
+def get_same_src_few_shot_examples(df, n_per_class=1, source_id=None):
+    """
+    Select few-shot examples all from the same source tweet thread.
+    
+    This ensures all examples share the same rumour context, which may help
+    the model better understand stance classification within a single thread.
+    
+    Args:
+        df: DataFrame with tweet data
+        n_per_class: Number of examples per stance class
+        source_id: Optional specific source ID to use. If None, finds a thread
+                   with all 4 stances automatically.
+    
+    Returns:
+        List of example dicts with 'source' (formatted input) and 'label'
+    """
+    all_four = {'support', 'deny', 'query', 'comment'}
+    
+    # Find a source with all 4 stances if not specified
+    if source_id is None:
+        candidates = []
+        for src_id in df['source_id'].unique():
+            replies = df[(df['source_id'] == src_id) & (df['tweet_id'] != src_id)]
+            if len(replies) > 0:
+                stances = set(replies['label_text'].unique())
+                if stances == all_four:
+                    # Score by balance (prefer equal distribution)
+                    counts = replies['label_text'].value_counts()
+                    balance_score = counts.min() / counts.max()
+                    candidates.append((src_id, balance_score, len(replies)))
+        
+        if not candidates:
+            print("Warning: No source has all 4 stances, falling back to random selection")
+            return get_random_stratified_few_shot_examples(df, n_per_class)
+        
+        # Sort by balance score (most balanced first), then by size (smaller preferred)
+        candidates.sort(key=lambda x: (-x[1], x[2]))
+        source_id = candidates[0][0]
+        print(f"Using source {source_id} for few-shot examples (balance: {candidates[0][1]:.2f})")
+    
+    # Get replies from this source
+    thread_df = df[(df['source_id'] == source_id) & (df['tweet_id'] != source_id)]
+    
+    examples = []
+    for label in ['support', 'deny', 'query', 'comment']:
+        class_df = thread_df[thread_df['label_text'] == label]
+        if len(class_df) == 0:
+            print(f"Warning: No {label} examples in thread {source_id}")
+            continue
+        samples = class_df.sample(n=min(n_per_class, len(class_df)))
+        
+        for _, row in samples.iterrows():
+            examples.append({
+                'source': format_input_with_context(row, df, use_features=False),
+                'label': label.upper()
+            })
+    
+    return examples
+
+
+# Deterministic few-shot examples from diverse sources/topics
+# Selected manually to cover different rumour types and topics
+DIVERSE_FEW_SHOT_IDS = {
+    # Each from a different topic for maximum diversity (TRAINING DATA ONLY)
+    'support': '553486439129038848',   # charliehebdo - clear support
+    'deny': '500384255814299648',       # ferguson - explicit denial
+    'query': '525003827494531073',      # ottawashooting - questioning veracity  
+    'comment': '544314008980172800',    # sydneysiege - neutral observation
+}
+
+
+# Deterministic few-shot examples from same source thread (TRAINING DATA ONLY)
+# Source 529739968470867968 from 'prince-toronto' topic - has all 4 stances, most balanced
+SAME_SRC_SOURCE_ID = '529739968470867968'
+SAME_SRC_FEW_SHOT_IDS = {
+    'support': '529740822238232577',   # support reply in this thread
+    'deny': '529740809672077313',       # deny reply in this thread
+    'query': '529748991849013248',      # query reply in this thread
+    'comment': '529741574742507520',    # comment reply in this thread
+}
+
+
+def get_diverse_few_shot_examples(df):
+    """
+    Get deterministic few-shot examples from different sources and topics.
+    
+    Uses pre-selected tweet IDs that represent clear examples of each stance
+    from diverse rumour topics. This ensures reproducibility for coursework.
+    
+    Returns:
+        List of example dicts with 'source' (formatted input) and 'label'
+    """
+    examples = []
+    
+    for label, tweet_id in DIVERSE_FEW_SHOT_IDS.items():
+        row = df[df['tweet_id'] == tweet_id]
+        if len(row) == 0:
+            print(f"Warning: Tweet {tweet_id} not found in dataset for {label}")
+            continue
+        row = row.iloc[0]
+        examples.append({
+            'source': format_input_with_context(row, df, use_features=False),
+            'label': label.upper()
+        })
+    
+    return examples
+
+
+def get_same_src_few_shot_examples_deterministic(df):
+    """
+    Get deterministic few-shot examples all from the same source thread.
+    
+    Uses pre-selected tweet IDs from a single thread with all 4 stances.
+    This ensures reproducibility for coursework.
+    
+    Returns:
+        List of example dicts with 'source' (formatted input) and 'label'
+    """
+    examples = []
+    
+    for label, tweet_id in SAME_SRC_FEW_SHOT_IDS.items():
+        row = df[df['tweet_id'] == tweet_id]
+        if len(row) == 0:
+            print(f"Warning: Tweet {tweet_id} not found in dataset for {label}")
+            continue
+        row = row.iloc[0]
+        examples.append({
+            'source': format_input_with_context(row, df, use_features=False),
+            'label': label.upper()
+        })
+    
+    return examples
+
+
+# Deterministic random-stratified examples (fixed seed selection from training)
+# Pre-selected to simulate random stratified sampling, reproducible
+RANDOM_STRATIFIED_FEW_SHOT_IDS = {
+    'support': '544306719686656000',   # sydneysiege
+    'deny': '524990163446140928',       # ottawashooting
+    'query': '500386447158161408',      # ferguson
+    'comment': '553543395717550080',    # charliehebdo
+}
+
+
+def get_random_stratified_few_shot_examples_deterministic(df):
+    """
+    Get deterministic 'random' stratified examples for reproducibility.
+    
+    Uses pre-selected tweet IDs that simulate random stratified sampling.
+    Each example is from a different source tweet.
+    
+    Returns:
+        List of example dicts with 'source' (formatted input) and 'label'
+    """
+    examples = []
+    
+    for label, tweet_id in RANDOM_STRATIFIED_FEW_SHOT_IDS.items():
+        row = df[df['tweet_id'] == tweet_id]
+        if len(row) == 0:
+            print(f"Warning: Tweet {tweet_id} not found in dataset for {label}")
+            continue
+        row = row.iloc[0]
+        examples.append({
+            'source': format_input_with_context(row, df, use_features=False),
+            'label': label.upper()
+        })
+    
+    return examples
+
+
+# %%
+# Strategy Comparison Experiment
+
+FEW_SHOT_STRATEGIES = {
+    'diverse': get_diverse_few_shot_examples,
+    'same_src': get_same_src_few_shot_examples_deterministic,
+    'random_stratified': get_random_stratified_few_shot_examples_deterministic,
+}
+
+
+def run_strategy_comparison(pipe, train_df, eval_df, save=True):
+    """
+    Compare few-shot selection strategies.
+    
+    Runs evaluation with each strategy and returns results for visualization.
+    All strategies use deterministic pre-selected examples for reproducibility.
+    """
+    results = {}
+    
+    # Zero-shot baseline
+    print(f"\n{'='*60}\nZero-Shot Baseline\n{'='*60}")
+    results['zero_shot'] = evaluate_prompting(pipe, eval_df, mode="zero-shot", verbose=True)
+    
+    # Each strategy
+    for strategy_name, get_examples_fn in FEW_SHOT_STRATEGIES.items():
+        print(f"\n{'='*60}\n{strategy_name} Strategy\n{'='*60}")
+        examples = get_examples_fn(train_df)
+        print(f"  Using {len(examples)} examples")
+        results[strategy_name] = evaluate_prompting(
+            pipe, eval_df, mode="few-shot", examples=examples, verbose=True
+        )
+    
+    if save:
+        # Save results
+        output = {
+            strategy: {
+                'macro_f1': r['macro_f1'],
+                'per_class_f1': r['per_class_f1'],
+                'error_rate': r['error_rate']
+            }
+            for strategy, r in results.items()
+        }
+        with open(f"{RESULTS_DIR}strategy_comparison.json", 'w') as f:
+            json.dump(output, f, indent=2)
+        print(f"\nSaved: {RESULTS_DIR}strategy_comparison.json")
+    
+    return results
+
+
+def plot_strategy_comparison(results, save_path=None):
+    """
+    Create grouped bar chart comparing few-shot strategies.
+    
+    X-axis: Strategies (zero_shot, diverse, same_src, random_stratified)
+    Y-axis: F1 Score
+    Bars: Macro F1 and per-class F1
+    """
+    strategies = ['zero_shot', 'diverse', 'same_src', 'random_stratified']
+    strategy_labels = ['Zero-Shot', 'Diverse', 'Same Source', 'Random Stratified']
+    metrics = ['macro_f1', 'support', 'deny', 'query', 'comment']
+    metric_labels = ['Macro F1', 'Support', 'Deny', 'Query', 'Comment']
+    
+    # Prepare data
+    data = []
+    for strategy in strategies:
+        r = results[strategy]
+        row = [r['macro_f1']]
+        for cls in ['support', 'deny', 'query', 'comment']:
+            row.append(r['per_class_f1'][cls])
+        data.append(row)
+    
+    data = np.array(data)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    x = np.arange(len(strategies))
+    width = 0.15
+    
+    colors = ['#2ecc71', '#3498db', '#e74c3c', '#9b59b6', '#f39c12']
+    
+    for i, (metric, label, color) in enumerate(zip(metrics, metric_labels, colors)):
+        offset = (i - 2) * width
+        bars = ax.bar(x + offset, data[:, i], width, label=label, color=color, alpha=0.85)
+        # Add value labels on bars
+        for bar, val in zip(bars, data[:, i]):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                   f'{val:.2f}', ha='center', va='bottom', fontsize=8)
+    
+    ax.set_xlabel('Few-Shot Strategy', fontsize=12)
+    ax.set_ylabel('F1 Score', fontsize=12)
+    ax.set_title('Few-Shot Strategy Comparison: Effect on Stance Classification', fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(strategy_labels)
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
+    ax.set_ylim(0, 1.0)
+    ax.grid(axis='y', alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+    
+    plt.show()
+    return fig
+
+
 # %%
 # Evaluation
 
 def evaluate_prompting(pipe, df, mode="zero-shot", examples=None, batch_size=2, verbose=True):
     """Evaluate prompting on a dataset using batched inference. Increase batch_size if you have more VRAM."""
     
+    # Load tokenizer for token counting
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    
     # Prepare all messages upfront
     all_messages = []
+    token_counts = []
     for _, row in df.iterrows():
         input_text = format_input_with_context(row, df, use_features=False)
         if mode == "zero-shot":
@@ -201,6 +478,20 @@ def evaluate_prompting(pipe, df, mode="zero-shot", examples=None, batch_size=2, 
         else:
             messages = build_few_shot_messages(input_text, examples)
         all_messages.append(messages)
+        
+        # Count tokens using chat template
+        prompt_tokens = len(tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True))
+        token_counts.append(prompt_tokens)
+    
+    # Log token statistics
+    if verbose:
+        print(f"\nToken Statistics ({mode}):")
+        print(f"  Min: {min(token_counts)}, Max: {max(token_counts)}")
+        print(f"  Mean: {np.mean(token_counts):.1f}, Median: {np.median(token_counts):.1f}")
+        if max(token_counts) > 7500:
+            print(f"  ⚠️  WARNING: {sum(1 for t in token_counts if t > 7500)} prompts exceed 7500 tokens!")
+        else:
+            print(f"  ✓ All prompts within 8K context limit")
     
     # Batched inference using Dataset
     dataset = Dataset.from_dict({"messages": all_messages})
@@ -314,7 +605,7 @@ def run_experiment(test_on="test", save=True):
     pipe = create_pipeline()
     
     # Few-shot examples
-    few_shot_examples = get_few_shot_examples(train_df, n_per_class=1)
+    few_shot_examples = get_diverse_few_shot_examples(train_df)
     print(f"Few-shot examples: {len(few_shot_examples)}")
     
     # Zero-shot
