@@ -8,32 +8,29 @@ Using open-source LLMs with zero-shot and few-shot prompting for
 RumourEval 2017 Subtask A
 """
 
+import argparse
+import gc
+import json
 import os
 import re
-import json
-import torch
+from collections import Counter
+
 import numpy as np
-from tqdm.auto import tqdm
-from sklearn.metrics import f1_score, classification_report, confusion_matrix
-from transformers import pipeline
+import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import torch
+from datasets import Dataset
+from sklearn.metrics import f1_score, classification_report, confusion_matrix
+from tqdm.auto import tqdm
+from transformers import pipeline
 
 from data_loader import load_dataset, format_input_with_context
 
 # %%
 # Configuration
 
-MODEL_OPTIONS = {
-    "llama3.1-8b": "meta-llama/Llama-3.1-8B-Instruct",
-    "mistral-7b": "mistralai/Mistral-7B-Instruct-v0.3",
-    "qwen2.5-7b": "Qwen/Qwen2.5-7B-Instruct",
-    "phi3-mini": "microsoft/Phi-3-mini-4k-instruct",
-    "gemma2-9b": "google/gemma-2-9b-it",
-    "gemma3-12b": "google/gemma-3-12b-it",
-}
-
-DEFAULT_MODEL = "gemma3-12b"
+MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
 RESULTS_DIR = "./results/prompting/"
 SEED = 42
 
@@ -103,29 +100,45 @@ def build_few_shot_messages(thread_context, examples=None):
 # Response parsing
 
 VALID_STANCES = ['SUPPORT', 'DENY', 'QUERY', 'COMMENT']
+REFUSAL_PATTERNS = ['CANNOT', 'UNABLE', 'I\'M NOT', 'I AM NOT', 'SORRY']
 
 def parse_stance_response(text):
-    """Parse LLM response to extract stance label. Returns lowercase label or 'comment' as fallback."""
-    text = text.upper().strip()
+    """
+    Parse LLM response to extract stance label.
+    Returns tuple: (label, error_type)
+    - label: lowercase stance label or None if parsing fails
+    - error_type: None if success, else 'empty'|'refusal'|'multiple'|'no_label'
+    """
+    if not text or not text.strip():
+        return None, 'empty'
     
-    for label in VALID_STANCES:
-        if re.search(rf'\b{label}\b', text):
-            return label.lower()
+    text_upper = text.upper().strip()
     
-    return 'comment'  # Fallback
+    # Check for refusal
+    if any(pat in text_upper for pat in REFUSAL_PATTERNS):
+        return None, 'refusal'
+    
+    # Find all matching labels
+    found = [label for label in VALID_STANCES if re.search(rf'\b{label}\b', text_upper)]
+    
+    if len(found) == 1:
+        return found[0].lower(), None  # Success
+    elif len(found) > 1:
+        return None, 'multiple'  # Ambiguous
+    else:
+        return None, 'no_label'  # No valid stance found
 
 
 # %%
 # Model loading
 
-def create_pipeline(model_key=DEFAULT_MODEL):
+def create_pipeline():
     """Create a text generation pipeline."""
-    model_name = MODEL_OPTIONS.get(model_key, model_key)
-    print(f"Creating pipeline for: {model_name}")
+    print(f"Creating pipeline for: {MODEL_NAME}")
     
     return pipeline(
         "text-generation",
-        model=model_name,
+        model=MODEL_NAME,
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True
@@ -149,8 +162,8 @@ def classify_instance(pipe, input_text, mode="zero-shot", examples=None):
         messages = build_few_shot_messages(input_text, examples)
     
     response = generate_response(pipe, messages)
-    label = parse_stance_response(response)
-    return label, response
+    label, error = parse_stance_response(response)
+    return label, response, error
 
 
 # %%
@@ -178,7 +191,6 @@ def get_few_shot_examples(df, n_per_class=1):
 
 def evaluate_prompting(pipe, df, mode="zero-shot", examples=None, batch_size=2, verbose=True):
     """Evaluate prompting on a dataset using batched inference. Increase batch_size if you have more VRAM."""
-    from datasets import Dataset
     
     # Prepare all messages upfront
     all_messages = []
@@ -198,30 +210,54 @@ def evaluate_prompting(pipe, df, mode="zero-shot", examples=None, batch_size=2, 
                     total=len(df), desc=f"Evaluating ({mode})"):
         raw_responses.append(out[0]["generated_text"][-1]["content"].strip())
     
-    # Parse responses
-    predictions = [parse_stance_response(r) for r in raw_responses]
+    # Parse responses and track errors
+    parsed_results = [parse_stance_response(r) for r in raw_responses]
+    labels_parsed = [p[0] for p in parsed_results]
+    error_types = [p[1] for p in parsed_results]
     true_labels = df['label_text'].tolist()
     
-    # Metrics
-    labels = ['support', 'deny', 'query', 'comment']
-    macro_f1 = f1_score(true_labels, predictions, average='macro')
-    per_class_f1 = f1_score(true_labels, predictions, average=None, labels=labels)
+    # Count error types
+    error_counts = Counter(e for e in error_types if e is not None)
+    total_errors = sum(error_counts.values())
+    error_rate = total_errors / len(parsed_results)
+    
+    # For metrics, filter out parse errors
+    valid_indices = [i for i, label in enumerate(labels_parsed) if label is not None]
+    predictions = [labels_parsed[i] for i in valid_indices]
+    filtered_true = [true_labels[i] for i in valid_indices]
+    
+    # Metrics (on valid predictions only)
+    stance_labels = ['support', 'deny', 'query', 'comment']
+    if len(predictions) > 0:
+        macro_f1 = f1_score(filtered_true, predictions, average='macro')
+        per_class_f1 = f1_score(filtered_true, predictions, average=None, labels=stance_labels)
+    else:
+        macro_f1 = 0.0
+        per_class_f1 = [0.0, 0.0, 0.0, 0.0]
     
     if verbose:
         print(f"\n{'='*60}\nResults ({mode})\n{'='*60}")
+        print(f"Parse errors: {total_errors}/{len(parsed_results)} ({error_rate:.1%})")
+        if error_counts:
+            print(f"  Error breakdown: {dict(error_counts)}")
         print(f"Macro F1: {macro_f1:.4f}")
         print(f"\nPer-class F1:")
-        for lbl, f1 in zip(labels, per_class_f1):
+        for lbl, f1 in zip(stance_labels, per_class_f1):
             print(f"  {lbl}: {f1:.4f}")
-        print(f"\n{classification_report(true_labels, predictions, labels=labels)}")
+        if len(predictions) > 0:
+            print(f"\n{classification_report(filtered_true, predictions, labels=stance_labels)}")
     
     return {
-        'predictions': predictions,
+        'predictions': labels_parsed,  # includes None for errors
         'true_labels': true_labels,
         'raw_responses': raw_responses,
+        'error_types': error_types,
         'macro_f1': macro_f1,
-        'per_class_f1': dict(zip(labels, per_class_f1)),
-        'confusion_matrix': confusion_matrix(true_labels, predictions, labels=labels)
+        'per_class_f1': dict(zip(stance_labels, per_class_f1)),
+        'confusion_matrix': confusion_matrix(filtered_true, predictions, labels=stance_labels) if len(predictions) > 0 else None,
+        'error_counts': dict(error_counts),
+        'total_errors': total_errors,
+        'error_rate': error_rate,
     }
 
 
@@ -242,10 +278,10 @@ def plot_confusion_matrix(cm, mode, save_path=None):
     plt.show()
 
 
-def save_results(results, model_key, mode):
+def save_results(results, mode):
     """Save evaluation results to JSON."""
     output = {
-        'model': model_key,
+        'model': MODEL_NAME,
         'mode': mode,
         'macro_f1': results['macro_f1'],
         'per_class_f1': results['per_class_f1'],
@@ -254,7 +290,7 @@ def save_results(results, model_key, mode):
         'raw_responses': results['raw_responses']
     }
     
-    filename = f"{RESULTS_DIR}{model_key}_{mode}_results.json"
+    filename = f"{RESULTS_DIR}llama3.1-8b_{mode}_results.json"
     with open(filename, 'w') as f:
         json.dump(output, f, indent=2)
     print(f"Saved: {filename}")
@@ -263,10 +299,10 @@ def save_results(results, model_key, mode):
 # %%
 # Main experiment
 
-def run_experiment(model_key=DEFAULT_MODEL, test_on="test", save=True):
+def run_experiment(test_on="test", save=True):
     """Run full zero-shot and few-shot evaluation experiment."""
     print(f"\n{'='*60}")
-    print(f"SDQC Prompting Experiment - {model_key}")
+    print(f"SDQC Prompting Experiment - {MODEL_NAME}")
     print(f"{'='*60}\n")
     
     # Load data
@@ -275,7 +311,7 @@ def run_experiment(model_key=DEFAULT_MODEL, test_on="test", save=True):
     print(f"Train: {len(train_df)}, Eval ({test_on}): {len(eval_df)}")
     
     # Load pipeline
-    pipe = create_pipeline(model_key)
+    pipe = create_pipeline()
     
     # Few-shot examples
     few_shot_examples = get_few_shot_examples(train_df, n_per_class=1)
@@ -286,18 +322,18 @@ def run_experiment(model_key=DEFAULT_MODEL, test_on="test", save=True):
     zero_results = evaluate_prompting(pipe, eval_df, mode="zero-shot")
     
     if save:
-        save_results(zero_results, model_key, "zero-shot")
+        save_results(zero_results, "zero-shot")
         plot_confusion_matrix(zero_results['confusion_matrix'], "Zero-Shot",
-                              f"{RESULTS_DIR}{model_key}_zero_shot_cm.png")
+                              f"{RESULTS_DIR}llama3.1-8b_zero_shot_cm.png")
     
     # Few-shot
     print(f"\n{'='*60}\nFew-Shot Evaluation\n{'='*60}")
     few_results = evaluate_prompting(pipe, eval_df, mode="few-shot", examples=few_shot_examples)
     
     if save:
-        save_results(few_results, model_key, "few-shot")
+        save_results(few_results, "few-shot")
         plot_confusion_matrix(few_results['confusion_matrix'], "Few-Shot",
-                              f"{RESULTS_DIR}{model_key}_few_shot_cm.png")
+                              f"{RESULTS_DIR}llama3.1-8b_few_shot_cm.png")
     
     # Summary
     print(f"\n{'='*60}\nSummary\n{'='*60}")
@@ -312,12 +348,12 @@ def run_experiment(model_key=DEFAULT_MODEL, test_on="test", save=True):
 # CLI
 
 if __name__ == "__main__":
-    import argparse
     
     parser = argparse.ArgumentParser(description="SDQC classification via prompting")
-    parser.add_argument("--model", default=DEFAULT_MODEL, choices=list(MODEL_OPTIONS.keys()))
     parser.add_argument("--test-on", default="test", choices=["test", "dev"])
     parser.add_argument("--no-save", action="store_true")
     
     args = parser.parse_args()
-    run_experiment(model_key=args.model, test_on=args.test_on, save=not args.no_save)
+    
+    run_experiment(test_on=args.test_on, save=not args.no_save)
+
