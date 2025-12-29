@@ -12,7 +12,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 import spacy
 import pandas as pd
 
-from data_loader import get_train_data, get_dev_data, get_test_data, get_all_data
+from data_loader import load_dataset
 
 # %%
 nlp = spacy.load('en_core_web_sm')
@@ -20,33 +20,48 @@ nlp = spacy.load('en_core_web_sm')
 # global var
 RAND_SEED = 42
 STOPWORDS = nlp.Defaults.stop_words
-PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris', 'germanwings', 'alps'} # words not to lemmatize
-SPECIFIC_TRANSFORMATIONS = { # special cases for normalisation
-    r'\bcharlie\s+hebdo\b': 'charliehebdo',
-    r'\bgerman\s+wings\b': 'germanwings',
+PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris', 'alps'} # words not to lemmatize
+SAVE_DIR = './results/analytics/' # set to None to disable saving
+
+# colours for stances in plots
+STANCE_COLORS = {
+    'support': 'green',
+    'deny': 'red',
+    'query': 'blue',
+    'comment': 'gray'
 }
-SAVE_DIR = './results/analytics/'
 
 # use regex to remove patterns
 RE_PATTERNS = [
-    re.compile(r'https?://\S+|www\.\S+'), # url
-    re.compile(r'@\w+'), # mentions
+    re.compile(r'https?://\S+|www\.\S+'), # url
+    re.compile(r'@\w+'), # mentions
     re.compile("["
             u"\U0001F600-\U0001F64F"  # emoticons
             u"\U0001F300-\U0001F5FF"  # symbols & pictographs
             u"\U0001F680-\U0001F6FF"  # transport & map symbols
             u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
-            u"\U00002702-\U000027B0" # <-- these are unicode ranges
+            u"\U00002702-\U000027B0" # <-- these are unicode ranges
             u"\U000024C2-\U0001F251"
             "]+", flags=re.UNICODE),
 ]
 
+# event-specific words to remove (not super informative for stance analysis)
+TOPIC_WORDS = [
+    'charlie', 'hebdo', 'charliehebdo',
+    'ebola', 'essien',
+    'ferguson',
+    'germanwings',
+    'ottawa', 'shooting',
+    'prince', 'toronto',
+    'putin', 'missing',
+    'sydney', 'siege', 'sydneysiege',
+]
+# comment out to include topic words in analysis
+RE_PATTERNS.append(re.compile(r'\b(' + '|'.join(TOPIC_WORDS) + r')\b'))
+
+sns.set_theme(style='whitegrid', font='Arial')
+
 # %%
-# functions
-
-
-# ---- preprocessing ----
-
 def tokenize(text, lemmatize=True):
     """Tokenize: lowercase, decode HTML entities, remove URLs, mentions, punctuation, stopwords, and optionally lemmatize."""
     text = text.lower()
@@ -61,10 +76,6 @@ def tokenize(text, lemmatize=True):
     # remove punct
     punct_table = str.maketrans('', '', string.punctuation)
     text = text.translate(punct_table)
-    
-    # merge charlie hebdo (it appeared as 'charlie', 'hebdo' and 'charliehebdo')
-    for pattern, replacement in SPECIFIC_TRANSFORMATIONS.items():
-        text = re.sub(pattern, replacement, text)
     
     # tokenise, filter stopwords & lemmatise
     doc = nlp(text)
@@ -84,72 +95,93 @@ def tokenize(text, lemmatize=True):
     
     return tokens
 
+# %% [markdown]
+# # Analytics
 
+# %%
+# load dataset
+train_df, dev_df, test_df = load_dataset()
+all_df = pd.concat([train_df, dev_df, test_df])
+
+# %%
+# class proportions
+print("\nClass proportions in TRAIN set:")
+print(train_df['label_text'].value_counts(normalize=True).mul(100))
+
+print("\nClass proportions in DEV set:")
+print(dev_df['label_text'].value_counts(normalize=True).mul(100))
+
+print("\nClass proportions in TEST set:")
+print(test_df['label_text'].value_counts(normalize=True).mul(100))
+
+# %%
+# (a) unigrams and bigrams
+
+# 1 - vars
+plot_df = all_df[all_df['source_id'].notna()] # only plot replies
+top_n = 10 # top n to plot
+
+# 2 - get unigrams and bigrams
 def get_bigrams(tokens):
     """Generate bigrams from a list of tokens."""
     return [(tokens[i], tokens[i+1]) for i in range(len(tokens)-1)]
 
+unigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
+bigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
 
-# ----- 1a unigrams and bigrams -----
+for _, row in plot_df.iterrows():
+    tokens = tokenize(row['text'])
+    unigrams[row['label_text']].update(tokens)
+    bigrams[row['label_text']].update(get_bigrams(tokens))
 
-def get_ngrams_by_stance(df):
-    """Compute unigrams and bigrams for replies, grouped by stance label."""
-    unigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
-    bigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
-    
-    def process_row(row):
-        tokens = tokenize(row['text'])
-        unigrams[row['label_text']].update(tokens)
-        bigrams[row['label_text']].update(get_bigrams(tokens))
-    
-    df.apply(process_row, axis=1)
-    return unigrams, bigrams
+# 3 - plot top unigrams and bigrams by stance
+labels = ['support', 'deny', 'query', 'comment']    
 
-def plot_ngrams_by_stance(unigrams, bigrams, top_n=10, save_dir=SAVE_DIR):
-    """Plot bar charts for top unigrams and bigrams by stance."""
-    labels = ['support', 'deny', 'query', 'comment']
-    
-    # Plot unigrams
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    axes = axes.flatten()
-    
-    for ax, label in zip(axes, labels):
-        top_words = unigrams[label].most_common(top_n)
-        if top_words:
-            words, counts = zip(*top_words)
-            sns.barplot(x=list(counts), y=list(words), ax=ax, 
-                       hue=list(words), legend=False)
-            ax.set_xlabel('Count')
-            ax.set_title(f'{label.upper()}')
-        
-    plt.suptitle('Top Unigrams by Stance', fontsize=16)
-    plt.tight_layout()
-    plt.savefig(save_dir + 'unigrams_by_stance.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: {save_dir}unigrams_by_stance.png")
-    plt.show()
-    
-    # Plot bigrams
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    axes = axes.flatten()
-    
-    for ax, label in zip(axes, labels):
-        top_bigrams = bigrams[label].most_common(top_n)
-        if top_bigrams:
-            bigram_strs = [' '.join(b) for b, _ in top_bigrams]
-            counts = [c for _, c in top_bigrams]
-            sns.barplot(x=counts, y=bigram_strs, ax=ax,
-                       hue=bigram_strs, legend=False)
-            ax.set_xlabel('Count')
-            ax.set_title(f'{label.upper()}')
-    
-    plt.suptitle('Top Bigrams by Stance', fontsize=16)
-    plt.tight_layout()
-    plt.savefig(save_dir + 'bigrams_by_stance.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: {save_dir}bigrams_by_stance.png")
-    plt.show()
+# unigrams
+_, axes = plt.subplots(2, 2, figsize=(14, 10))
+axes = axes.flatten()
 
+for ax, label in zip(axes, labels):
+    top_words = unigrams[label].most_common(top_n)
+    n_tokens = sum(unigrams[label].values())
+    if top_words:
+        words, counts = zip(*top_words)
+        sns.barplot(x=list(counts), y=list(words), ax=ax,
+                    color=STANCE_COLORS[label], legend=False)
+        ax.set_xlabel('Count')
+        ax.set_title(f'{label.upper()} ({n_tokens:,} unigrams)')
+    
+plt.suptitle('Top Unigrams by Stance (Replies Only)', fontsize=14)
+plt.tight_layout()
+if SAVE_DIR: 
+    plt.savefig(SAVE_DIR + 'unigrams_by_stance.png', dpi=150, bbox_inches='tight')
+    print(f"Saved: {SAVE_DIR}unigrams_by_stance.png")
+plt.show()
 
-# ----- 1a comparing token dist -----
+# bigrams
+_, axes = plt.subplots(2, 2, figsize=(12, 10))
+axes = axes.flatten()
+
+for ax, label in zip(axes, labels):
+    top_bigrams = bigrams[label].most_common(top_n)
+    n_bigrams = sum(bigrams[label].values())
+    if top_bigrams:
+        bigram_strs = [' '.join(b) for b, _ in top_bigrams]
+        counts = [c for _, c in top_bigrams]
+        sns.barplot(x=counts, y=bigram_strs, ax=ax,
+                    color=STANCE_COLORS[label], legend=False)
+        ax.set_xlabel('Count')
+        ax.set_title(f'{label.upper()} ({n_bigrams:,} bigrams)')
+
+plt.suptitle('Top Bigrams by Stance (Replies Only)', fontsize=14)
+plt.tight_layout()
+if SAVE_DIR: 
+    plt.savefig(SAVE_DIR + 'bigrams_by_stance.png', dpi=150, bbox_inches='tight')
+    print(f"Saved: {SAVE_DIR}bigrams_by_stance.png")
+plt.show()
+
+# %%
+# (a) comparing token distributions
 
 def compare_source_vs_reply_distributions(df):
     # 4 categories: source_stance, source_non_stance, reply_stance, reply_non_stance
@@ -181,51 +213,60 @@ def compare_source_vs_reply_distributions(df):
     df.apply(process_row, axis=1)
     return {k: {'tokens': distributions[k], 'count': counts[k]} for k in distributions}
 
-def plot_source_vs_reply_distributions(distributions, n=15, save_dir=SAVE_DIR):
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-    plot_configs = [
-        # (row, col, category, title, palette)
-        (0, 0, 'source_stance', 'SOURCE Text - Stance (S/D/Q)', 'rocket'),
-        (0, 1, 'source_non_stance', 'SOURCE Text - Non-stance (C)', 'mako'),
-        (1, 0, 'reply_stance', 'REPLY Text - Stance (S/D/Q)', 'rocket'),
-        (1, 1, 'reply_non_stance', 'REPLY Text - Non-stance (C)', 'mako'),
-    ]
-    
-    for row, col, key, title, palette in plot_configs:
-        ax = axes[row, col]
-        data = distributions[key]
-        tokens_counter = data['tokens']
-        count = data['count']
-        
-        # top n tokens by frequency
-        top_tokens = tokens_counter.most_common(n)
-        
-        if top_tokens:
-            tokens, freqs = zip(*top_tokens)
-            sns.barplot(x=list(freqs), y=list(tokens), ax=ax,
-                       hue=list(tokens), palette=palette, legend=False)
-            ax.set_xlabel('Token Count')
-            ax.set_ylabel('Token')
-            ax.set_title(f'{title}\n(n={count} tweets)')
-        else:
-            print(f'no data for {key}!')
-    
-    plt.suptitle('Token Distributions', fontsize=14)
-    plt.tight_layout()
-    if save_dir: plt.savefig(save_dir + 'token_dist.png', dpi=150, bbox_inches='tight')
-    plt.show()
+# 1 - vars
+top_n = 15
 
+# 2 - get distributions
+distributions = compare_source_vs_reply_distributions(all_df)
 
-# ----- 1b LDA topics -----
+# 3 - plot
+_, axes = plt.subplots(2, 2, figsize=(12, 10))
+plot_configs = [
+    # (row, col, category, title, color)
+    (0, 0, 'source_stance', 'SOURCE Text - Stance (S/D/Q)', 'orange'),
+    (0, 1, 'source_non_stance', 'SOURCE Text - Non-stance (C)', 'gray'),
+    (1, 0, 'reply_stance', 'REPLY Text - Stance (S/D/Q)', 'red'),
+    (1, 1, 'reply_non_stance', 'REPLY Text - Non-stance (C)', 'dimgray'),
+]
+
+for row, col, key, title, color in plot_configs:
+    ax = axes[row, col]
+    data = distributions[key]
+    tokens_counter = data['tokens']
+    count = data['count']
+    
+    # top n tokens by frequency
+    top_tokens = tokens_counter.most_common(top_n)
+    
+    if top_tokens:
+        tokens, freqs = zip(*top_tokens)
+        sns.barplot(x=list(freqs), y=list(tokens), ax=ax,
+                    color=color, legend=False)
+        ax.set_xlabel('Token Count')
+        ax.set_ylabel('')
+        ax.set_title(f'{title}\n({count:,} tweets)')
+    else:
+        print(f'no data for {key}!')
+
+plt.suptitle('Token Distributions', fontsize=14)
+plt.tight_layout()
+if SAVE_DIR: 
+    plt.savefig(SAVE_DIR + 'token_dist.png', dpi=150, bbox_inches='tight')
+    print(f"Saved: {SAVE_DIR}token_dist.png")
+plt.show()
+
+# %%
+# (b) LDA analysis
+
 def lda_tokenize(text):
-    return ' '.join(tokenize(text)) # string for countvectorizer
+    return ' '.join(tokenize(text)) # string for countvectorizer
 
 def run_lda(texts, n_topics=5):
     vectorizer = CountVectorizer(ngram_range=(1, 3)) # already remove stopwords in tokenisation
     doc_term_matrix = vectorizer.fit_transform(texts)
-    
     lda = LatentDirichletAllocation(n_components=n_topics, max_iter=20, random_state=RAND_SEED)
     lda.fit(doc_term_matrix)
+    
     return lda, vectorizer.get_feature_names_out()
 
 def get_topic_words(lda, feature_names, n_words=10):
@@ -239,13 +280,12 @@ def get_topic_words(lda, feature_names, n_words=10):
 def print_topics(topics, title):
     print(f"\n{'='*80}")
     print(f"LDA TOPICS: {title}")
-    print(f"{'='*80}")
     for i, topic in enumerate(topics):
         words = [w for w, _ in topic]
         print(f"Topic {i}: {', '.join(words)}")
 
 def create_wordcloud(topics, title, save_path=None):
-    fig, axes = plt.subplots(1, len(topics), figsize=(4*len(topics), 4))
+    _, axes = plt.subplots(1, len(topics), figsize=(4*len(topics), 4))
     if len(topics) == 1:
         axes = [axes]
     
@@ -261,55 +301,37 @@ def create_wordcloud(topics, title, save_path=None):
     plt.suptitle(title, fontsize=14)
     plt.tight_layout()
     
-    if save_path:
+    if save_path: 
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"Saved: {save_path}")
     plt.show()
 
-def run_lda_analysis(df, n_topics=5):
-    # Split data
-    stance_df = df[df['label_text'].isin(['support', 'deny', 'query'])]
-    comment_df = df[df['label_text'] == 'comment']
-    
-    print(f"\nStance samples (S/D/Q): {len(stance_df)}")
-    print(f"Comment samples: {len(comment_df)}")
-    
-    # Preprocess
-    stance_texts = [lda_tokenize(text) for text in stance_df['text']]
-    comment_texts = [lda_tokenize(text) for text in comment_df['text']]
-    
-    # Run LDA on stance replies
-    print("\nRunning LDA on Stance (S/D/Q) replies...")
-    stance_lda, stance_features = run_lda(stance_texts, n_topics=n_topics)
-    stance_topics = get_topic_words(stance_lda, stance_features)
-    print_topics(stance_topics, "Stance Replies (S/D/Q)")
-    filename = SAVE_DIR + "stance_wordcloud.png"
-    create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", filename)
-    
-    # Run LDA on comment replies
-    print("\nRunning LDA on Comment replies...")
-    comment_lda, comment_features = run_lda(comment_texts, n_topics=n_topics)
-    comment_topics = get_topic_words(comment_lda, comment_features)
-    print_topics(comment_topics, "Comment Replies")
-    filename = SAVE_DIR + "comment_wordcloud.png"
-    create_wordcloud(comment_topics, "Comment Replies Topics", filename)
+# 1 - vars
+n_topics = 5
 
-# %%
-if __name__ == '__main__':
-    all_df = get_all_data() # TODO analyse differenced between different datasets (train, dev, test)
-    print(f"Total samples loaded: {len(all_df)}")
-    
-    print("Part (a): Computing unigrams and bigrams by stance...")
-    unigrams, bigrams = get_ngrams_by_stance(all_df)
-    plot_ngrams_by_stance(unigrams, bigrams, top_n=10)
-    
-    print("\nComparing source vs reply token distributions (stance vs comment)...")
-    distributions = compare_source_vs_reply_distributions(all_df)
-    plot_source_vs_reply_distributions(distributions, n=15)
-    
-    print("\n" + "="*80)
-    print("Part (b): LDA Topic Modeling")
-    print("="*80)
-    run_lda_analysis(all_df, n_topics=5)
+# 2 - run LDA for each stance
+stance_df = all_df[all_df['label_text'].isin(['support', 'deny', 'query'])]
+comment_df = all_df[all_df['label_text'] == 'comment']
+
+print(f"\nStance samples (S/D/Q): {len(stance_df)}")
+print(f"Comment samples: {len(comment_df)}")
+
+# tokenize
+stance_texts = [lda_tokenize(text) for text in stance_df['text']]
+comment_texts = [lda_tokenize(text) for text in comment_df['text']]
+
+# stance
+stance_lda, stance_features = run_lda(stance_texts, n_topics=n_topics)
+stance_topics = get_topic_words(stance_lda, stance_features)
+print_topics(stance_topics, "Stance Replies (S/D/Q)")
+save_path = SAVE_DIR + "stance_wordcloud.png" if SAVE_DIR else None
+create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", save_path)
+
+# comments
+comment_lda, comment_features = run_lda(comment_texts, n_topics=n_topics)
+comment_topics = get_topic_words(comment_lda, comment_features)
+print_topics(comment_topics, "Comment Replies")
+save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
+create_wordcloud(comment_topics, "Comment Replies Topics", save_path)
 
 # %%
