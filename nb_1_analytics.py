@@ -7,10 +7,14 @@ from collections import Counter # like dict except returns 0 rather than key err
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
+
 import spacy
 import pandas as pd
+import gensim
+import pyLDAvis
+import pyLDAvis.gensim_models as gensimvis
+from gensim import corpora
+from gensim.models import LdaModel
 
 from data_loader import load_dataset
 
@@ -118,7 +122,7 @@ print(test_df['label_text'].value_counts(normalize=True).mul(100))
 # (a) unigrams and bigrams
 
 # 1 - vars
-plot_df = all_df[all_df['source_id'].notna()] # only plot replies
+reply_df = all_df[all_df['source_id'].notna()] # only plot replies
 top_n = 10 # top n to plot
 
 # 2 - get unigrams and bigrams
@@ -129,7 +133,7 @@ def get_bigrams(tokens):
 unigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
 bigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
 
-for _, row in plot_df.iterrows():
+for _, row in reply_df.iterrows():
     tokens = tokenize(row['text'])
     unigrams[row['label_text']].update(tokens)
     bigrams[row['label_text']].update(get_bigrams(tokens))
@@ -258,31 +262,20 @@ plt.show()
 # %%
 # (b) LDA analysis
 
-def lda_tokenize(text):
-    return ' '.join(tokenize(text)) # string for countvectorizer
-
-def run_lda(texts, n_topics=5):
-    vectorizer = CountVectorizer(ngram_range=(1, 3)) # already remove stopwords in tokenisation
-    doc_term_matrix = vectorizer.fit_transform(texts)
-    lda = LatentDirichletAllocation(n_components=n_topics, max_iter=20, random_state=RAND_SEED)
-    lda.fit(doc_term_matrix)
-    
-    return lda, vectorizer.get_feature_names_out()
-
-def get_topic_words(lda, feature_names, n_words=10):
+def get_topic_words(lda_model, n_words=20):
     topics = []
-    for topic in lda.components_:
-        top_indices = topic.argsort()[:-n_words-1:-1]
-        top_words = [(feature_names[i], topic[i]) for i in top_indices]
+    for topic_id in range(lda_model.num_topics):
+        # get_topic_terms returns (word_id, probability) pairs
+        top_terms = lda_model.get_topic_terms(topic_id, topn=n_words)
+        top_words = [(lda_model.id2word[word_id], prob) for word_id, prob in top_terms]
         topics.append(top_words)
     return topics
 
 def print_topics(topics, title):
-    print(f"\n{'='*80}")
-    print(f"LDA TOPICS: {title}")
+    print(f"{title} - LDA topics:")
     for i, topic in enumerate(topics):
         words = [w for w, _ in topic]
-        print(f"Topic {i}: {', '.join(words)}")
+        print(f"[i]: {', '.join(words)}")
 
 def create_wordcloud(topics, title, save_path=None):
     _, axes = plt.subplots(1, len(topics), figsize=(4*len(topics), 4))
@@ -295,7 +288,7 @@ def create_wordcloud(topics, title, save_path=None):
                         max_words=50)
         wc.generate_from_frequencies(word_freq)
         ax.imshow(wc, interpolation='bilinear')
-        ax.set_title(f'Topic {i}', fontsize=16)
+        ax.set_title(f'Topic {i+1}', fontsize=12)
         ax.axis('off')
     
     plt.suptitle(title, fontsize=14)
@@ -307,31 +300,59 @@ def create_wordcloud(topics, title, save_path=None):
     plt.show()
 
 # 1 - vars
-n_topics = 5
+n_topics = 8
 
 # 2 - run LDA for each stance
-stance_df = all_df[all_df['label_text'].isin(['support', 'deny', 'query'])]
-comment_df = all_df[all_df['label_text'] == 'comment']
+reply_df = all_df[all_df['source_id'].notna()] # only plot replies
+stance_df = reply_df[reply_df['label_text'].isin(['support', 'deny', 'query'])]
+comment_df = reply_df[reply_df['label_text'] == 'comment']
 
 print(f"\nStance samples (S/D/Q): {len(stance_df)}")
 print(f"Comment samples: {len(comment_df)}")
 
 # tokenize
-stance_texts = [lda_tokenize(text) for text in stance_df['text']]
-comment_texts = [lda_tokenize(text) for text in comment_df['text']]
+stance_texts = [tokenize(text) for text in stance_df['text']]
+comment_texts = comment_df['text'].apply(tokenize).tolist()
 
-# stance
-stance_lda, stance_features = run_lda(stance_texts, n_topics=n_topics)
-stance_topics = get_topic_words(stance_lda, stance_features)
+# build corpus and dictionary
+stance_id2word = corpora.Dictionary(stance_texts)
+stance_corpus = [stance_id2word.doc2bow(text) for text in stance_texts]
+
+comment_id2word = corpora.Dictionary(comment_texts)
+comment_corpus = [comment_id2word.doc2bow(text) for text in comment_texts]
+
+# train LDA models
+stance_lda = LdaModel(
+    corpus=stance_corpus, id2word=stance_id2word, num_topics=n_topics,
+    passes=20, random_state=RAND_SEED, alpha='auto', eta='auto'
+)
+comment_lda = LdaModel(
+    corpus=comment_corpus, id2word=comment_id2word, num_topics=n_topics,
+    passes=20, random_state=RAND_SEED, alpha='auto', eta='auto'
+)
+
+# stance wordcloud
+stance_topics = get_topic_words(stance_lda)
 print_topics(stance_topics, "Stance Replies (S/D/Q)")
+
 save_path = SAVE_DIR + "stance_wordcloud.png" if SAVE_DIR else None
 create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", save_path)
 
-# comments
-comment_lda, comment_features = run_lda(comment_texts, n_topics=n_topics)
-comment_topics = get_topic_words(comment_lda, comment_features)
+# comment wordcloud
+comment_topics = get_topic_words(comment_lda)
 print_topics(comment_topics, "Comment Replies")
+
 save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
 create_wordcloud(comment_topics, "Comment Replies Topics", save_path)
 
+
+# %%
+# vis lda word lists with pyLDAvis
+
+def save_lda_vis(lda_model, corpus, id2word, filename):
+    vis_data = gensimvis.prepare(lda_model, corpus, id2word)
+    pyLDAvis.save_html(vis_data, filename)
+
+save_lda_vis(stance_lda, stance_corpus, stance_id2word, SAVE_DIR+'stance_LDA.html')
+save_lda_vis(comment_lda, comment_corpus, comment_id2word, SAVE_DIR+'comment_LDA.html')
 # %%
