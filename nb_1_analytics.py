@@ -7,12 +7,8 @@ from collections import Counter # like dict except returns 0 rather than key err
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
-
 import spacy
 import pandas as pd
-import gensim
-import pyLDAvis
-import pyLDAvis.gensim_models as gensimvis
 from gensim import corpora
 from gensim.models import LdaModel
 
@@ -331,6 +327,9 @@ comment_lda = LdaModel(
     passes=20, random_state=RAND_SEED, alpha='auto', eta='auto'
 )
 
+# %%
+# wordclouds
+
 # stance wordcloud
 stance_topics = get_topic_words(stance_lda)
 print_topics(stance_topics, "Stance Replies (S/D/Q)")
@@ -345,14 +344,11 @@ print_topics(comment_topics, "Comment Replies")
 save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
 create_wordcloud(comment_topics, "Comment Replies Topics", save_path)
 
+# %%
+# vis lda word lists with tmplot
+import tmplot as tmp
+tmp.report(stance_lda, corpus=stance_corpus, docs=stance_texts)
 
 # %%
-# vis lda word lists with pyLDAvis
-
-def save_lda_vis(lda_model, corpus, id2word, filename):
-    vis_data = gensimvis.prepare(lda_model, corpus, id2word)
-    pyLDAvis.save_html(vis_data, filename)
-
-save_lda_vis(stance_lda, stance_corpus, stance_id2word, SAVE_DIR+'stance_LDA.html')
-save_lda_vis(comment_lda, comment_corpus, comment_id2word, SAVE_DIR+'comment_LDA.html')
-# %%
+# comment lda vis
+tmp.report(comment_lda, corpus=comment_corpus, docs=comment_texts)
