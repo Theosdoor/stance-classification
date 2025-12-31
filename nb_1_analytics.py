@@ -134,51 +134,17 @@ for _, row in reply_df.iterrows():
     unigrams[row['label_text']].update(tokens)
     bigrams[row['label_text']].update(get_bigrams(tokens))
 
-# 3 - plot top unigrams and bigrams by stance
-labels = ['support', 'deny', 'query', 'comment']    
+# 3 - print top unigrams and bigrams by stance
+labels = ['support', 'deny', 'query', 'comment']
 
-# unigrams
-_, axes = plt.subplots(2, 2, figsize=(14, 10))
-axes = axes.flatten()
-
-for ax, label in zip(axes, labels):
-    top_words = unigrams[label].most_common(top_n)
-    n_tokens = sum(unigrams[label].values())
-    if top_words:
-        words, counts = zip(*top_words)
-        sns.barplot(x=list(counts), y=list(words), ax=ax,
-                    color=STANCE_COLORS[label], legend=False)
-        ax.set_xlabel('Count')
-        ax.set_title(f'{label.upper()} ({n_tokens:,} unigrams)')
-    
-plt.suptitle('Top Unigrams by Stance (Replies Only)', fontsize=14)
-plt.tight_layout()
-if SAVE_DIR: 
-    plt.savefig(SAVE_DIR + 'unigrams_by_stance.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: {SAVE_DIR}unigrams_by_stance.png")
-plt.show()
-
-# bigrams
-_, axes = plt.subplots(2, 2, figsize=(12, 10))
-axes = axes.flatten()
-
-for ax, label in zip(axes, labels):
-    top_bigrams = bigrams[label].most_common(top_n)
-    n_bigrams = sum(bigrams[label].values())
-    if top_bigrams:
-        bigram_strs = [' '.join(b) for b, _ in top_bigrams]
-        counts = [c for _, c in top_bigrams]
-        sns.barplot(x=counts, y=bigram_strs, ax=ax,
-                    color=STANCE_COLORS[label], legend=False)
-        ax.set_xlabel('Count')
-        ax.set_title(f'{label.upper()} ({n_bigrams:,} bigrams)')
-
-plt.suptitle('Top Bigrams by Stance (Replies Only)', fontsize=14)
-plt.tight_layout()
-if SAVE_DIR: 
-    plt.savefig(SAVE_DIR + 'bigrams_by_stance.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: {SAVE_DIR}bigrams_by_stance.png")
-plt.show()
+print("\n=== Top Unigrams and Bigrams by Stance ===\n")
+for label in labels:
+    top_uni = unigrams[label].most_common(top_n)
+    top_bi = bigrams[label].most_common(top_n)
+    print(f"--- {label.upper()} ---")
+    print(f"  Unigrams: {', '.join([w for w, _ in top_uni])}")
+    print(f"  Bigrams:  {', '.join([' '.join(b) for b, _ in top_bi])}")
+    print()
 
 # %%
 # (a) comparing token distributions
@@ -257,7 +223,6 @@ plt.show()
 
 # %%
 # (b) LDA analysis
-
 def get_topic_words(lda_model, n_words=20):
     topics = []
     for topic_id in range(lda_model.num_topics):
@@ -271,23 +236,31 @@ def print_topics(topics, title):
     print(f"{title} - LDA topics:")
     for i, topic in enumerate(topics):
         words = [w for w, _ in topic]
-        print(f"[i]: {', '.join(words)}")
+        print(f"[{i}]: {', '.join(words)}")
 
 def create_wordcloud(topics, title, save_path=None):
-    _, axes = plt.subplots(1, len(topics), figsize=(4*len(topics), 4))
-    if len(topics) == 1:
-        axes = [axes]
+    n_topics = len(topics)
+    n_cols = (n_topics + 1) // 2
+    n_rows = 2 if n_topics > 1 else 1
     
-    for ax, (i, topic) in zip(axes, enumerate(topics)):
+    _, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 4*n_rows))
+    axes = axes.flatten() if n_topics > 1 else [axes]
+    
+    for i, topic in enumerate(topics):
+        ax = axes[i]
         word_freq = {word: score for word, score in topic}
         wc = WordCloud(width=400, height=400, background_color='white',
-                        max_words=50)
+                        max_words=50, min_font_size=12, prefer_horizontal=0.9)
         wc.generate_from_frequencies(word_freq)
         ax.imshow(wc, interpolation='bilinear')
-        ax.set_title(f'Topic {i+1}', fontsize=12)
+        ax.set_title(f'Topic {i+1}', fontsize=14)
         ax.axis('off')
     
-    plt.suptitle(title, fontsize=14)
+    # hide unused subplots if odd number of topics
+    for j in range(n_topics, len(axes)):
+        axes[j].axis('off')
+    
+    plt.suptitle(title, fontsize=16)
     plt.tight_layout()
     
     if save_path: 
@@ -298,8 +271,7 @@ def create_wordcloud(topics, title, save_path=None):
 # 1 - vars
 n_topics = 8
 
-# 2 - run LDA for each stance
-reply_df = all_df[all_df['source_id'].notna()] # only plot replies
+# 2 - run LDA for each stance (use reply_df defined earlier to only plot replies)
 stance_df = reply_df[reply_df['label_text'].isin(['support', 'deny', 'query'])]
 comment_df = reply_df[reply_df['label_text'] == 'comment']
 
@@ -307,7 +279,7 @@ print(f"\nStance samples (S/D/Q): {len(stance_df)}")
 print(f"Comment samples: {len(comment_df)}")
 
 # tokenize
-stance_texts = [tokenize(text) for text in stance_df['text']]
+stance_texts = stance_df['text'].apply(tokenize).tolist()
 comment_texts = comment_df['text'].apply(tokenize).tolist()
 
 # build corpus and dictionary
