@@ -26,17 +26,17 @@ MODEL_NAME = "vinai/bertweet-large"
 BATCH_SIZE = 8
 LEARNING_RATE = 0.00004
 NUM_EPOCHS = 20
-WARMUP_RATIO = 0.15
-WEIGHT_DECAY = 0.05
+WARMUP_RATIO = 0.2
+WEIGHT_DECAY = 0.03
 EARLY_STOP_VAL_F1 = 0.7 # only stop early if the val macro-f1 is above this value
 EARLY_STOPPING_PATIENCE = 3
 
-MAX_LENGTH = 256
+MAX_LENGTH = 512
 N_LABELS = len(LABEL2ID) # 4 SDQC
 
 LORA_TARGET_MODULES = ["query", "key", "value"]
-LORA_ALPHA = 48
-LORA_R = 20
+LORA_ALPHA = 64
+LORA_R = 16
 LORA_DROPOUT = 0.1
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")

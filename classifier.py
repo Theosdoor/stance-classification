@@ -367,7 +367,7 @@ def train(config=None):
         # Initialize tokenizer
         model_key = config.get("model_name", "deberta")
         model_path = MODEL_OPTIONS.get(model_key)
-        max_length = MAX_LENGTH_OPTIONS.get(model_key, 256)
+        max_length = config.get("max_length", MAX_LENGTH_OPTIONS.get(model_key, 256))
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
         
         # Get context/feature flags from config
