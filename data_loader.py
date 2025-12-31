@@ -1,40 +1,25 @@
-"""
-Data loader for RumourEval stance classification.
-
-Loads tweets with thread context, features, and parent/source relationships.
-Features extraction inspired by extract_thread_features.py (SemEval baseline).
-
-Schema:
-- tweet_id: str - Tweet ID
-- source_id: str/None - Source tweet ID (None if this IS the source)
-- parent_id: str/None - Direct parent tweet ID (None if parent=source or is source)
-- text: str - Tweet text
-- topic: str - Topic name
-- label: int - 0-3 (S/D/Q/C)
-- label_text: str - support/deny/query/comment
-- context_chain: list[str] - Tweet texts between source→parent (excludes source, parent, target)
-- depth: int - Depth in thread (0=source)
-- features: dict - Extracted features
-"""
-
 import os
 import re
 import json
 import pickle
-import pandas as pd
-from pathlib import Path
+import urllib.request
 
-# ============================================================================
-# Constants
-# ============================================================================
+import pandas as pd
+import nltk
+from emoji import demojize
+from nltk.tokenize import TweetTokenizer
+
+nltk.download('punkt', quiet=True)
+
+# params
 
 LABEL2ID = {'support': 0, 'deny': 1, 'query': 2, 'comment': 3}
 ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
-KNOWN_TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
-                'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
+TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
+            'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
 
-# Data paths
+# data paths
 TRAIN_DATA_ROOT = 'data/semeval2017-task8-dataset/rumoureval-data'
 TRAIN_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
 DEV_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
@@ -42,7 +27,7 @@ TEST_DATA_ROOT = 'data/semeval2017-task8-test-data'
 TEST_LABELS = 'data/subtaska.json'
 SAVED_DATA_DIR = 'saved_data'
 
-# Lexicons for feature extraction (from extract_thread_features.py)
+# for feature extraction (from https://github.com/kochkinaelena/branchLSTM/blob/master/preprocessing.py)
 NEGATION_WORDS = {'not', 'no', 'nobody', 'nothing', 'none', 'never',
                   'neither', 'nor', 'nowhere', 'hardly', 'scarcely',
                   'barely', 'don', 'isn', 'wasn', 'shouldn', 'wouldn',
@@ -63,37 +48,33 @@ FALSE_ANTONYMS = {'accurate', 'authentic', 'correct', 'fair', 'faithful',
 
 WH_WORDS = {'what', 'when', 'where', 'which', 'who', 'whom', 'whose', 'why', 'how'}
 
-# Load swear words
-_SWEAR_WORDS = None
+# load bad words (from branchlstm code)
+BADWORDS = None
 def _get_swear_words():
-    global _SWEAR_WORDS
-    if _SWEAR_WORDS is None:
-        _SWEAR_WORDS = set()
-        swear_path = 'data_preprocessing/data/badwords.txt'
-        if os.path.exists(swear_path):
-            with open(swear_path, 'r') as f:
-                _SWEAR_WORDS = {line.strip().lower() for line in f if line.strip()}
-    return _SWEAR_WORDS
+    global BADWORDS
+    if BADWORDS is None:
+        BADWORDS = set()
+        try:
+            with urllib.request.urlopen('https://raw.githubusercontent.com/kochkinaelena/branchLSTM/refs/heads/master/badwords.txt') as response:
+                content = response.read().decode('utf-8')
+                BADWORDS = {line.strip().lower() for line in content.splitlines() if line.strip()}
+        except Exception as e:
+            print(f"Warning: Could not fetch badwords from URL: {e}")
+    return BADWORDS
 
 
-# ============================================================================
-# Feature Extraction
-# ============================================================================
-
+# extract features 
 def extract_features(tweet_json, depth=0):
-    """
-    Extract features from a tweet JSON object.
+    '''Extract features from a tweet JSON object.
     
-    Features inspired by extract_thread_features.py (SemEval baseline).
-    """
+    Adapted from https://github.com/kochkinaelena/branchLSTM/blob/master/preprocessing.py
+    '''
     text = tweet_json.get('text', '') or ''
     user = tweet_json.get('user', {}) or {}
     
-    # Tokenize for lexical features
     tokens = set(re.sub(r'([^\s\w]|_)+', '', text.lower()).split())
     
     features = {
-        # User features
         'user_verified': user.get('verified', False),
         'user_has_url': bool(user.get('url')),
         'user_default_profile': user.get('default_profile', False),
@@ -103,12 +84,10 @@ def extract_features(tweet_json, depth=0):
         'user_statuses_count': user.get('statuses_count', 0),
         'user_has_description': bool(user.get('description')),
         
-        # Tweet metadata
         'retweet_count': tweet_json.get('retweet_count', 0),
         'favorite_count': tweet_json.get('favorite_count', 0),
         'depth': depth,
         
-        # Text features
         'has_qmark': '?' in text,
         'has_emark': '!' in text,
         'has_hashtag': '#' in text,
@@ -118,7 +97,6 @@ def extract_features(tweet_json, depth=0):
         'char_count': len(text),
         'word_count': len(text.split()),
         
-        # Lexical features
         'has_negation': bool(tokens & NEGATION_WORDS),
         'num_negation': len(tokens & NEGATION_WORDS),
         'has_swearwords': bool(tokens & _get_swear_words()),
@@ -127,17 +105,13 @@ def extract_features(tweet_json, depth=0):
         'has_unconfirmed': 'unconfirmed' in tokens,
         'has_rumour': bool(tokens & {'rumour', 'rumor', 'gossip', 'hoax'}),
         'num_wh_words': len(tokens & WH_WORDS),
-        
-        # Capital ratio
         'capital_ratio': sum(1 for c in text if c.isupper()) / max(len(text), 1),
     }
     
     return features
 
 
-# ============================================================================
-# Thread Processing
-# ============================================================================
+# process twitter thread
 
 def load_json(path):
     """Load a JSON file."""
@@ -167,7 +141,6 @@ def build_thread_data(thread_path, labels, topic=None):
     if not os.path.exists(source_dir):
         return []
     
-    # Load source tweet
     source_files = [f for f in os.listdir(source_dir) if f.endswith('.json')]
     if not source_files:
         return []
@@ -177,16 +150,13 @@ def build_thread_data(thread_path, labels, topic=None):
     if not source_json:
         return []
     
-    # Load structure
     structure = {}
     if os.path.exists(structure_path):
         structure = load_json(structure_path)
-        # Handle structure with source_id as root key
         if source_id in structure:
             structure = structure[source_id]
     
-    # Load all replies
-    reply_jsons = {}  # reply_id -> tweet_json
+    reply_jsons = {}
     if os.path.exists(replies_dir):
         for reply_file in os.listdir(replies_dir):
             if reply_file.endswith('.json'):
@@ -195,13 +165,11 @@ def build_thread_data(thread_path, labels, topic=None):
                 if reply_json:
                     reply_jsons[reply_id] = reply_json
     
-    # Build id -> text map for context chain building
     id_to_text = {source_id: source_json.get('text', '')}
     for rid, rjson in reply_jsons.items():
         id_to_text[rid] = rjson.get('text', '')
     
-    # Build parent map from structure (BFS)
-    parent_map = {}  # child_id -> parent_id
+    parent_map = {}
     depth_map = {source_id: 0}
     
     def traverse_structure(struct, parent_id, current_depth):
@@ -213,7 +181,6 @@ def build_thread_data(thread_path, labels, topic=None):
     
     traverse_structure(structure, source_id, 1)
     
-    # Build context chain for each tweet
     def get_context_chain(tweet_id):
         """Get texts from source to parent (excluding source, parent, and target).
         
@@ -230,23 +197,13 @@ def build_thread_data(thread_path, labels, topic=None):
         while current in parent_map:
             path_to_source.append(current)
             current = parent_map[current]
-        # path_to_source = [tweet, parent, grandparent, ..., first_reply_to_source]
-        # current is now source_id
-        
-        # path_to_source[0] = tweet (target)
-        # path_to_source[1] = parent (if exists)
-        # path_to_source[2:] = intermediate tweets (from closest-to-parent to closest-to-source)
-        
+            
         if len(path_to_source) <= 2:
-            # No intermediate tweets (direct reply or reply to direct reply)
             return []
         
-        # Get intermediate tweet IDs (exclude target and parent)
-        intermediate_ids = path_to_source[2:]  # grandparent, great-grandparent, ... first_reply
-        # Reverse to get chronological order (closest to source first)
+        intermediate_ids = path_to_source[2:]
         intermediate_ids = intermediate_ids[::-1]
         
-        # Get texts
         context_texts = []
         for tid in intermediate_ids:
             if tid in id_to_text:
@@ -257,11 +214,10 @@ def build_thread_data(thread_path, labels, topic=None):
     
     results = []
     
-    # Add source tweet if labeled
     if source_id in labels:
         results.append({
             'tweet_id': source_id,
-            'source_id': None,  # This IS the source
+            'source_id': None,
             'parent_id': None,
             'text': source_json.get('text', ''),
             'topic': topic,
@@ -272,19 +228,16 @@ def build_thread_data(thread_path, labels, topic=None):
             'features': extract_features(source_json, depth=0),
         })
     
-    # Add reply tweets if labeled
     for reply_id, reply_json in reply_jsons.items():
         if reply_id not in labels:
             continue
         
-        # Get parent - from structure or in_reply_to_status_id
         parent_id = parent_map.get(reply_id)
         if not parent_id:
             in_reply = reply_json.get('in_reply_to_status_id_str') or reply_json.get('in_reply_to_status_id')
             if in_reply:
                 parent_id = str(in_reply)
         
-        # Determine if parent is the source
         actual_parent_id = None if parent_id == source_id else parent_id
         
         depth = depth_map.get(reply_id, 1)
@@ -310,15 +263,13 @@ def process_data_root(data_root, labels, is_test=False):
     all_tweets = []
     
     if is_test:
-        # Test data has threads directly in root
         for item in os.listdir(data_root):
             thread_path = os.path.join(data_root, item)
             if os.path.isdir(thread_path) and not item.startswith('.'):
                 tweets = build_thread_data(thread_path, labels, topic='test')
                 all_tweets.extend(tweets)
     else:
-        # Train/dev data organized by topic
-        for topic in KNOWN_TOPICS:
+        for topic in TOPICS:
             topic_path = os.path.join(data_root, topic)
             if not os.path.exists(topic_path):
                 continue
@@ -332,12 +283,8 @@ def process_data_root(data_root, labels, is_test=False):
     return pd.DataFrame(all_tweets)
 
 
-# ============================================================================
-# Main Loading Functions
-# ============================================================================
-
+# loading fns
 def _load_all_labels():
-    """Load all label files."""
     train_labels = load_json(TRAIN_LABELS) if os.path.exists(TRAIN_LABELS) else {}
     dev_labels = load_json(DEV_LABELS) if os.path.exists(DEV_LABELS) else {}
     test_labels = load_json(TEST_LABELS) if os.path.exists(TEST_LABELS) else {}
@@ -345,58 +292,35 @@ def _load_all_labels():
 
 
 def _build_datasets():
-    """Build train, dev, test DataFrames from raw data."""
     train_labels, dev_labels, test_labels = _load_all_labels()
-    
-    print(f"Loading train data ({len(train_labels)} labels)...")
+
     train_df = process_data_root(TRAIN_DATA_ROOT, train_labels, is_test=False)
-    
-    print(f"Loading dev data ({len(dev_labels)} labels)...")
     dev_df = process_data_root(TRAIN_DATA_ROOT, dev_labels, is_test=False)
-    
-    print(f"Loading test data ({len(test_labels)} labels)...")
-    test_df = process_data_root(TEST_DATA_ROOT, test_labels, is_test=True)
-    
-    print(f"Loaded: train={len(train_df)}, dev={len(dev_df)}, test={len(test_df)}")
-    
+    test_df = process_data_root(TEST_DATA_ROOT, test_labels, is_test=True)    
     return train_df, dev_df, test_df
 
 
 def load_dataset(force_rebuild=False):
-    """
-    Load train, dev, test DataFrames.
-    
-    Uses cached pickle files in saved_data/ if available.
-    
-    Returns:
-        tuple: (train_df, dev_df, test_df)
-    """
     cache_path = os.path.join(SAVED_DATA_DIR, 'datasets.pkl')
     
-    # Try to load from cache
+    # return saved if possible
     if not force_rebuild and os.path.exists(cache_path):
         print(f"Loading cached data from {cache_path}...")
         with open(cache_path, 'rb') as f:
             return pickle.load(f)
     
-    # Build from raw data
     train_df, dev_df, test_df = _build_datasets()
     
-    # Save to cache
     os.makedirs(SAVED_DATA_DIR, exist_ok=True)
     with open(cache_path, 'wb') as f:
         pickle.dump((train_df, dev_df, test_df), f)
-    print(f"Saved cache to {cache_path}")
+    print(f"Saved dataset cache to {cache_path}")
     
     return train_df, dev_df, test_df
 
 
-# ============================================================================
-# Input Formatting for Classifier
-# ============================================================================
-
+# format features for model input
 def format_feature_string(features, keys=None):
-    """Format features as a compact string for model input."""
     if keys is None:
         keys = ['user_verified', 'depth', 'has_qmark', 'has_url', 'has_negation']
     
@@ -405,25 +329,21 @@ def format_feature_string(features, keys=None):
         v = features.get(k, 0)
         if isinstance(v, bool):
             v = int(v)
-        if v:  # Only include non-zero features
+        if v:
             parts.append(f"{k.split('_')[-1]}:{v}")
     
     return ','.join(parts) if parts else 'none'
 
 
-# ----- tweet normalisation (https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py) ----- #
-# (needs to be same as used in berTweet pretraining)
+# tweet normalisation (from https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py)
 
-from emoji import demojize
-import nltk
-from nltk.tokenize import TweetTokenizer
-nltk.download('punkt')
-
-# Tweet tokenizer for BERTweet normalization
 _tweet_tokenizer = TweetTokenizer()
 
 def _normalise_token(token):
-    """Normalize a single token following BERTweet preprocessing."""
+    '''Normalize a single token.
+    
+    From https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py
+    '''
     lowercased_token = token.lower()
     if token.startswith("@"):
         return "@USER"
@@ -441,14 +361,10 @@ def _normalise_token(token):
 
 
 def normalise_tweet(tweet):
-    """
-    BertTweet normalisation
+    '''Normalize tweet text for BERTweet.
     
-    - Converts emojis to text descriptions using emoji library
-    - Replaces user mentions (@username) with @USER
-    - Replaces URLs with HTTPURL
-    - Handles contractions and special characters
-    """
+    From https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py
+    '''
     if not tweet:
         return tweet
     
@@ -488,6 +404,8 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     Format: [SRC] source [SRC_F] features [CTX] context [PARENT] parent [PARENT_F] features [TARGET] target [TARGET_F] features
     
     If max_tokens and tokenizer are provided, truncates context first if needed.
+
+    From https://aclanthology.org/S19-2191.pdf
     """
     target_text = normalise_tweet(row['text'])
     source_id = row['source_id']
@@ -495,10 +413,7 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     context_chain = [normalise_tweet(ctx) for ctx in row.get('context_chain', [])]
     features = row.get('features', {})
     
-    # Build core parts (source, parent, target) - these are never truncated
     core_parts = []
-    
-    # Source text (look up in df if this is not the source)
     if source_id is not None:
         source_row = df[df['tweet_id'] == source_id]
         if len(source_row) > 0:
@@ -507,7 +422,6 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
             if use_features:
                 core_parts.append(f"[SRC_F] {format_feature_string(source_row.iloc[0].get('features', {}))}")
     
-    # Build parent part
     parent_parts = []
     if parent_id is not None:
         parent_row = df[df['tweet_id'] == parent_id]
@@ -517,41 +431,32 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
             if use_features:
                 parent_parts.append(f"[PARENT_F] {format_feature_string(parent_row.iloc[0].get('features', {}))}")
     
-    # Build target part
     target_parts = [f"[TARGET] {target_text}"]
     if use_features:
         target_parts.append(f"[TARGET_F] {format_feature_string(features)}")
     
-    # Build context part - this gets truncated if needed
     context_parts = []
     if use_context and context_chain:
-        # Start with all context, truncate if needed
-        available_context = list(context_chain)  # Copy
+        available_context = list(context_chain)
         
         if max_tokens and tokenizer:
-            # Estimate tokens for core parts
             core_text = ' '.join(core_parts + parent_parts + target_parts)
             core_tokens = len(tokenizer.encode(core_text, add_special_tokens=False))
-            remaining_tokens = max_tokens - core_tokens - 10  # Leave buffer
+            remaining_tokens = max_tokens - core_tokens - 10
             
-            # Progressively reduce context until it fits
             while available_context and remaining_tokens > 0:
                 ctx_text = ' [SEP] '.join(available_context)
                 ctx_tokens = len(tokenizer.encode(f"[CTX] {ctx_text}", add_special_tokens=False))
-                
                 if ctx_tokens <= remaining_tokens:
                     break
-                # Remove oldest context first
                 available_context = available_context[1:]
         else:
-            # No tokenizer - just limit to 3 context tweets
             available_context = available_context[:3]
         
         if available_context:
             ctx_text = ' [SEP] '.join(available_context)
             context_parts.append(f"[CTX] {ctx_text}")
     
-    # Combine all parts in order: source -> context -> parent -> target
     all_parts = core_parts + context_parts + parent_parts + target_parts
     return ' '.join(all_parts)
 
@@ -559,31 +464,17 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
 # get specific datasets
 
 def get_train_data():
-    """Load training data."""
     train_df, _, _ = load_dataset()
     return train_df
 
 def get_dev_data():
-    """Load dev data."""
     _, dev_df, _ = load_dataset()
     return dev_df
 
 def get_test_data():
-    """Load test data."""
     _, _, test_df = load_dataset()
     return test_df
 
 def get_all_data():
-    """Load all data combined."""
     train_df, dev_df, test_df = load_dataset()
     return pd.concat([train_df, dev_df, test_df], ignore_index=True)
-
-
-if __name__ == '__main__':
-    # Test the loader
-    train_df, dev_df, test_df = load_dataset(force_rebuild=True)
-    print(f"\nTrain: {len(train_df)}, Dev: {len(dev_df)}, Test: {len(test_df)}")
-    print(f"Columns: {train_df.columns.tolist()}")
-    print(f"\nSource tweets in train: {train_df['source_id'].isna().sum()}")
-    print(f"\nSample row:")
-    print(train_df.iloc[0])

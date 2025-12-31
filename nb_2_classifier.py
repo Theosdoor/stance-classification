@@ -287,7 +287,6 @@ def train(train_df, dev_df, verbose=True):
     
     # train loop
     best_f1 = 0
-    best_epoch = 0
     epochs_without_improvement = 0
     
     for epoch in tqdm(range(NUM_EPOCHS), desc="Epochs"):        
@@ -297,17 +296,16 @@ def train(train_df, dev_df, verbose=True):
         )
         
         # eval
-        val_loss, val_f1, val_preds, val_labels = evaluate(
+        val_loss, val_f1, _, _ = evaluate(
             model, dev_loader, loss_fn
         )
-        
+
         print(f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f}")
         print(f"Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f}")
         
         # save best model
         if val_f1 > best_f1:
             best_f1 = val_f1
-            best_epoch = epoch + 1
             epochs_without_improvement = 0
             
             # save chekckpoint
@@ -368,11 +366,8 @@ if __name__ == "__main__":
     test_loss, test_f1, test_preds, test_labels = evaluate(
         model, test_loader, loss_fn
     )
-    
-    print(f"\n{'='*60}")
-    print(f"Test Set Evaluation")
+
     print(f"Test Loss: {test_loss:.4f} | Test F1: {test_f1:.4f}")
-    print(f"{'='*60}")
     
     print("\nClassification Report:")
     print(classification_report(
