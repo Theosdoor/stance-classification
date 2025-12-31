@@ -1,11 +1,3 @@
-"""
-Stance Classifier using DeBERTa-v3 with LoRA Fine-tuning
-
-4-way classification: Support, Deny, Query, Comment
-Input: source_text + reply_text concatenation
-Uses W&B for hyperparameter sweeps and diagnostics
-"""
-
 import os
 import json
 import numpy as np
@@ -24,7 +16,7 @@ from tqdm.auto import tqdm
 from dotenv import load_dotenv
 import wandb
 
-from data_loader import load_dataset, format_input_with_context, LABEL_TO_ID, ID_TO_LABEL
+from data_loader import load_dataset, format_input_with_context, LABEL2ID, ID2LABEL
 
 # Load environment variables
 load_dotenv()
@@ -37,16 +29,12 @@ CLASSIFIER_NAME = "stance-classifier"
 
 # Model options
 MODEL_OPTIONS = {
-    "deberta": "microsoft/deberta-v3-base",
-    # "bertweet": "vinai/bertweet-base",
     "bertweet-large": "vinai/bertweet-large", # has 512 max tokens rather than 128
 }
 
 # Model-specific max sequence lengths
 # Note: bertweet-large supports 512 but we use 256 to balance context vs GPU memory
 MAX_LENGTH_OPTIONS = {
-    "deberta": 256,
-    "bertweet": 128,
     "bertweet-large": 256,
 }
 
@@ -55,16 +43,6 @@ MAX_LENGTH_OPTIONS = {
 # - "attention": all attention projections (balanced)
 # - "all_linear": all linear layers including FFN (most expressive but slower)
 LORA_TARGET_PRESETS = {
-    "deberta": {
-        "minimal": ["query_proj", "value_proj"],
-        "attention": ["query_proj", "key_proj", "value_proj"],
-        "all_linear": ["query_proj", "key_proj", "value_proj", "dense"],
-    },
-    "bertweet": {
-        "minimal": ["query", "value"],
-        "attention": ["query", "key", "value"],
-        "all_linear": ["query", "key", "value", "dense"],
-    },
     "bertweet-large": {
         "minimal": ["query", "value"],
         "attention": ["query", "key", "value"],
@@ -72,7 +50,7 @@ LORA_TARGET_PRESETS = {
     },
 }
 
-NUM_LABELS = 4
+N_LABELS = 4
 
 # LoRA defaults
 LORA_R = 16 # rank
@@ -82,7 +60,7 @@ LORA_DROPOUT = 0.1
 # Training defaults (can be overridden by W&B sweep)
 DEFAULT_CONFIG = {
     "model_name": "bertweet-large",
-    "lora_targets": "all_linear",     # "minimal", "attention", or "all_linear"
+    "lora_targets": "attention",     # "minimal", "attention", or "all_linear"
     "learning_rate": 2e-5,
     "batch_size": 16,
     "num_epochs": 20,
@@ -238,7 +216,7 @@ def create_model(config):
     # Load base model
     model = AutoModelForSequenceClassification.from_pretrained(
         model_path,
-        num_labels=NUM_LABELS,
+        num_labels=N_LABELS,
         problem_type="single_label_classification"
     )
     
@@ -510,7 +488,7 @@ def train(config=None):
                         probs=None,
                         y_true=val_labels,
                         preds=val_preds,
-                        class_names=list(LABEL_TO_ID.keys())
+                        class_names=list(LABEL2ID.keys())
                     )
                 })
             else:
@@ -537,16 +515,16 @@ def train(config=None):
         print("\nClassification Report (last epoch):")
         report = classification_report(
             val_labels, val_preds, 
-            target_names=list(LABEL_TO_ID.keys()),
+            target_names=list(LABEL2ID.keys()),
             output_dict=True
         )
         print(classification_report(
             val_labels, val_preds, 
-            target_names=list(LABEL_TO_ID.keys())
+            target_names=list(LABEL2ID.keys())
         ))
         
         # Log per-class metrics to W&B for report
-        for class_name in LABEL_TO_ID.keys():
+        for class_name in LABEL2ID.keys():
             if class_name in report:
                 wandb.log({
                     f"final/{class_name}_precision": report[class_name]['precision'],

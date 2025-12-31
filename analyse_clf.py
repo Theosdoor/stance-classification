@@ -26,7 +26,7 @@ from peft import PeftModel
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from tqdm.auto import tqdm
 
-from data_loader import load_dataset, format_input_with_context, LABEL_TO_ID, ID_TO_LABEL
+from data_loader import load_dataset, format_input_with_context, LABEL2ID, ID2LABEL
 
 # Device
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -124,7 +124,7 @@ labels = test_df['label'].values
 # %%
 # Primary Metrics
 
-class_names = list(LABEL_TO_ID.keys())
+class_names = list(LABEL2ID.keys())
 
 macro_f1 = f1_score(labels, predictions, average='macro')
 weighted_f1 = f1_score(labels, predictions, average='weighted')
@@ -203,11 +203,11 @@ print("PER-CLASS ERROR ANALYSIS")
 print("=" * 60)
 
 test_df_results = test_df.copy()
-test_df_results['predicted'] = [ID_TO_LABEL[p] for p in predictions]
+test_df_results['predicted'] = [ID2LABEL[p] for p in predictions]
 test_df_results['correct'] = test_df_results['predicted'] == test_df_results['label_text']
 test_df_results['confidence'] = [probabilities[i, predictions[i]] for i in range(len(predictions))]
 
-for label_id, label_name in ID_TO_LABEL.items():
+for label_id, label_name in ID2LABEL.items():
     class_df = test_df_results[test_df_results['label'] == label_id]
     
     if len(class_df) == 0:

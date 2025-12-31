@@ -23,7 +23,7 @@ from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from tqdm.auto import tqdm
 import wandb
 
-from data_loader import load_dataset, format_input_with_context, LABEL_TO_ID, ID_TO_LABEL
+from data_loader import load_dataset, format_input_with_context, LABEL2ID, ID2LABEL
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Device: {DEVICE}")
@@ -209,7 +209,7 @@ if model is not None and tokenizer is not None:
             probs = torch.softmax(outputs.logits, dim=1)
             pred = torch.argmax(outputs.logits, dim=1).item()
         
-        pred_label = ID_TO_LABEL[pred]
+        pred_label = ID2LABEL[pred]
         confidence = probs[0, pred].item()
         status = "✅" if pred_label == row['label_text'] else "❌"
         
@@ -243,7 +243,7 @@ if model is not None and tokenizer is not None:
         labels.append(row['label'])
     
     print("\nClassification Report:")
-    print(classification_report(labels, predictions, target_names=list(LABEL_TO_ID.keys())))
+    print(classification_report(labels, predictions, target_names=list(LABEL2ID.keys())))
     
     macro_f1 = f1_score(labels, predictions, average='macro')
     print(f"📊 Dev Set Macro F1: {macro_f1:.4f}")

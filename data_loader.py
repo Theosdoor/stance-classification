@@ -28,8 +28,8 @@ from pathlib import Path
 # Constants
 # ============================================================================
 
-LABEL_TO_ID = {'support': 0, 'deny': 1, 'query': 2, 'comment': 3}
-ID_TO_LABEL = {v: k for k, v in LABEL_TO_ID.items()}
+LABEL2ID = {'support': 0, 'deny': 1, 'query': 2, 'comment': 3}
+ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
 KNOWN_TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
                 'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
@@ -266,7 +266,7 @@ def build_thread_data(thread_path, labels, topic=None):
             'text': source_json.get('text', ''),
             'topic': topic,
             'label_text': labels[source_id],
-            'label': LABEL_TO_ID[labels[source_id]],
+            'label': LABEL2ID[labels[source_id]],
             'context_chain': [],
             'depth': 0,
             'features': extract_features(source_json, depth=0),
@@ -296,7 +296,7 @@ def build_thread_data(thread_path, labels, topic=None):
             'text': reply_json.get('text', ''),
             'topic': topic,
             'label_text': labels[reply_id],
-            'label': LABEL_TO_ID[labels[reply_id]],
+            'label': LABEL2ID[labels[reply_id]],
             'context_chain': get_context_chain(reply_id),
             'depth': depth,
             'features': extract_features(reply_json, depth=depth),
