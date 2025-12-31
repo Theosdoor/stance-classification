@@ -31,15 +31,15 @@ LEARNING_RATE = 0.00004
 NUM_EPOCHS = 20
 WARMUP_RATIO = 0.2
 WEIGHT_DECAY = 0.03
-EARLY_STOP_VAL_F1 = 0.7 # only stop early if the val macro-f1 is above this value
+EARLY_STOP_VAL_F1 = 0.68 # only stop early if the val macro-f1 is above this value
 EARLY_STOPPING_PATIENCE = 3
 
 MAX_LENGTH = 512
 N_LABELS = len(LABEL2ID) # 4 SDQC
 
-LORA_TARGET_MODULES = ["query", "key", "value"]
+LORA_TARGET_MODULES = ["query", "value"]
 LORA_ALPHA = 64
-LORA_R = 16
+LORA_R = 20
 LORA_DROPOUT = 0.1
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -239,6 +239,7 @@ def train(train_df, dev_df, verbose=True):
     
     # get class weights for loss function
     class_weights = compute_class_weights(train_df).to(DEVICE)
+    print(f"Class weights: {class_weights.cpu().numpy()}")
     
     # tokenizer and load datasets
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
@@ -402,11 +403,49 @@ if __name__ == "__main__":
 
     print(f"Test Loss: {test_loss:.4f} | Test F1: {test_f1:.4f}")
     
-    print("\nClassification Report:")
-    print(classification_report(
+    # report
+    report_str = classification_report(
         test_labels, test_preds,
         target_names=list(LABEL2ID.keys())
-    ))
+    )
+    print(report_str)
     
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(test_labels, test_preds))
+    # Plot Classification Report
+    report_dict = classification_report(
+        test_labels, test_preds, 
+        target_names=list(LABEL2ID.keys()), 
+        output_dict=True
+    )
+    
+    df_report = pd.DataFrame(report_dict).transpose()
+    # keep: per class & macro f1, precision, recall
+    rows_to_keep = list(LABEL2ID.keys()) + ['macro avg']
+    cols_to_keep = ['precision', 'recall', 'f1-score']
+    df_plot = df_report.loc[rows_to_keep, cols_to_keep]
+    
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(df_plot, annot=True, cmap='YlGnBu', fmt='.3f')
+    plt.title('Test Metrics: Per-class & Macro F1')
+    plt.tight_layout()
+    plot_path_metrics = os.path.join(CHECKPOINT_DIR, "test_metrics_heatmap.png")
+    plt.savefig(plot_path_metrics)
+    print(f"Test metrics heatmap saved to {plot_path_metrics}")
+    plt.show()
+
+    # conf matrix
+    cm = confusion_matrix(test_labels, test_preds)
+    print(cm)
+    
+    # Plot Confusion Matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=list(LABEL2ID.keys()), 
+                yticklabels=list(LABEL2ID.keys()))
+    plt.title('Confusion Matrix')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.tight_layout()
+    plot_path_cm = os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
+    plt.savefig(plot_path_cm)
+    print(f"Confusion matrix heatmap saved to {plot_path_cm}")
+    plt.show()
