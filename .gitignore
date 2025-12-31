@@ -5,8 +5,6 @@ wandb/
 .vscode/
 saved_data/
 
-/downloaded_data/*
-!/downloaded_data/README.md
 
 
 # Byte-compiled / optimized / DLL files

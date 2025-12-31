@@ -28,6 +28,7 @@ LEARNING_RATE = 0.00004
 NUM_EPOCHS = 20
 WARMUP_RATIO = 0.15
 WEIGHT_DECAY = 0.05
+EARLY_STOP_VAL_F1 = 0.7 # only stop early if the val macro-f1 is above this value
 EARLY_STOPPING_PATIENCE = 3
 
 MAX_LENGTH = 256
@@ -318,8 +319,8 @@ def train(train_df, dev_df, verbose=True):
             epochs_without_improvement += 1
             print(f"No improvement for {epochs_without_improvement} epochs")
             
-            if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
-                print(f"\nEarly stopping triggered after {epoch + 1} epochs")
+            if epochs_without_improvement >= EARLY_STOPPING_PATIENCE and val_f1 >= EARLY_STOP_VAL_F1:
+                print(f"\nEarly stopping triggered after {epoch + 1} epochs (val F1 >= {EARLY_STOP_VAL_F1})")
                 break
     
     return model, tokenizer
