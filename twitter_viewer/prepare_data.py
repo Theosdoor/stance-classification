@@ -11,11 +11,11 @@ from pathlib import Path
 from datetime import datetime
 
 # Data paths
-TRAIN_DATA_ROOT = '../data/semeval2017-task8-dataset/rumoureval-data'
-TEST_DATA_ROOT = '../data/semeval2017-task8-test-data'
-TRAIN_LABELS = '../data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
-DEV_LABELS = '../data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
-TEST_LABELS = '../data/subtaska.json'
+TRAIN_DATA_ROOT = '../downloaded_data/semeval2017-task8-dataset/rumoureval-data'
+TEST_DATA_ROOT = '../downloaded_data/semeval2017-task8-test-data'
+TRAIN_LABELS = '../downloaded_data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
+DEV_LABELS = '../downloaded_data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
+TEST_LABELS = '../downloaded_data/subtaska.json'
 
 KNOWN_TOPICS = ['charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
                 'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege']

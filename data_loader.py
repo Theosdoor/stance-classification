@@ -20,11 +20,11 @@ TOPICS = {'charliehebdo', 'ebola-essien', 'ferguson', 'germanwings-crash',
             'ottawashooting', 'prince-toronto', 'putinmissing', 'sydneysiege'}
 
 # data paths
-TRAIN_DATA_ROOT = 'data/semeval2017-task8-dataset/rumoureval-data'
-TRAIN_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
-DEV_LABELS = 'data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
-TEST_DATA_ROOT = 'data/semeval2017-task8-test-data'
-TEST_LABELS = 'data/subtaska.json'
+TRAIN_DATA_ROOT = 'downloaded_data/semeval2017-task8-dataset/rumoureval-data'
+TRAIN_LABELS = 'downloaded_data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-train.json'
+DEV_LABELS = 'downloaded_data/semeval2017-task8-dataset/traindev/rumoureval-subtaskA-dev.json'
+TEST_DATA_ROOT = 'downloaded_data/semeval2017-task8-test-data'
+TEST_LABELS = 'downloaded_data/subtaska.json'
 SAVED_DATA_DIR = 'saved_data'
 
 # for feature extraction (from https://github.com/kochkinaelena/branchLSTM/blob/master/preprocessing.py)
