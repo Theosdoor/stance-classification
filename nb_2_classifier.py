@@ -13,6 +13,9 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 from tqdm.auto import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
+import pandas as pd
 
 from data_loader import load_dataset, format_input_with_context, LABEL2ID, ID2LABEL
 
@@ -290,6 +293,8 @@ def train(train_df, dev_df, verbose=True):
     best_f1 = 0
     epochs_without_improvement = 0
     
+    logs = {'train_loss': [], 'val_f1': []}
+    
     for epoch in tqdm(range(NUM_EPOCHS), desc="Epochs"):        
         # train
         train_loss, train_f1 = train_epoch(
@@ -300,6 +305,9 @@ def train(train_df, dev_df, verbose=True):
         val_loss, val_f1, _, _ = evaluate(
             model, dev_loader, loss_fn
         )
+        
+        logs['train_loss'].append(train_loss)
+        logs['val_f1'].append(val_f1)
 
         print(f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f}")
         print(f"Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f}")
@@ -323,7 +331,7 @@ def train(train_df, dev_df, verbose=True):
                 print(f"\nEarly stopping triggered after {epoch + 1} epochs (val F1 >= {EARLY_STOP_VAL_F1})")
                 break
     
-    return model, tokenizer
+    return model, tokenizer, logs
 
 # %% [markdown]
 # # Analysis
@@ -338,7 +346,31 @@ if __name__ == "__main__":
     checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
     if not os.path.exists(checkpoint_path):
         print("No checkpoint found, training new model...")
-        model, tokenizer = train(train_df, dev_df)
+        model, tokenizer, history = train(train_df, dev_df)
+        
+        # plot training diagnostics
+        sns.set_theme(style="whitegrid")
+        plt.figure(figsize=(12, 5))
+        
+        epochs = range(1, len(history['train_loss']) + 1)
+        
+        plt.subplot(1, 2, 1)
+        sns.lineplot(x=epochs, y=history['train_loss'], marker='o', label='Train Loss')
+        plt.title('Training Loss vs Epoch')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        
+        plt.subplot(1, 2, 2)
+        sns.lineplot(x=epochs, y=history['val_f1'], marker='o', color='orange', label='Val Macro F1')
+        plt.title('Validation Macro F1 vs Epoch')
+        plt.xlabel('Epoch')
+        plt.ylabel('Macro F1')
+        
+        plt.tight_layout()
+        plot_path = os.path.join(CHECKPOINT_DIR, "train_diag.png")
+        plt.savefig(plot_path)
+        print(f"Training diagnostics plot saved to {plot_path}")
+        plt.show()
     else:
         print(f"Loading existing checkpoint at {checkpoint_path}")
         tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, use_fast=False)
