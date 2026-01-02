@@ -397,27 +397,29 @@ def normalise_tweet(tweet):
 
 
 
-def format_input_with_context(row, df, use_features=True, use_context=True, max_tokens=None, tokenizer=None):
+def format_input_with_context(row, df, use_features=True, use_context=True, max_tokens=None, tokenizer=None, normalise_tweets=True):
     """
     Format input for classifier with context and features.
     
     Format: [SRC] source [SRC_F] features [CTX] context [PARENT] parent [PARENT_F] features [TARGET] target [TARGET_F] features
     
     If max_tokens and tokenizer are provided, truncates context first if needed.
+    If normalise_tweets is True, applies BERTweet normalization to tweet text.
 
     From https://aclanthology.org/S19-2191.pdf
     """
-    target_text = normalise_tweet(row['text'])
+    _norm = normalise_tweet if normalise_tweets else lambda x: x
+    target_text = _norm(row['text'])
     source_id = row['source_id']
     parent_id = row['parent_id']
-    context_chain = [normalise_tweet(ctx) for ctx in row.get('context_chain', [])]
+    context_chain = [_norm(ctx) for ctx in row.get('context_chain', [])]
     features = row.get('features', {})
     
     core_parts = []
     if source_id is not None:
         source_row = df[df['tweet_id'] == source_id]
         if len(source_row) > 0:
-            source_text = normalise_tweet(source_row.iloc[0]['text'])
+            source_text = _norm(source_row.iloc[0]['text'])
             core_parts.append(f"[SRC] {source_text}")
             if use_features:
                 core_parts.append(f"[SRC_F] {format_feature_string(source_row.iloc[0].get('features', {}))}")
@@ -426,7 +428,7 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     if parent_id is not None:
         parent_row = df[df['tweet_id'] == parent_id]
         if len(parent_row) > 0:
-            parent_text = normalise_tweet(parent_row.iloc[0]['text'])
+            parent_text = _norm(parent_row.iloc[0]['text'])
             parent_parts.append(f"[PARENT] {parent_text}")
             if use_features:
                 parent_parts.append(f"[PARENT_F] {format_feature_string(parent_row.iloc[0].get('features', {}))}")
