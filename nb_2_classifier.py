@@ -34,7 +34,7 @@ WEIGHT_DECAY = 0.03
 EARLY_STOP_VAL_F1 = 0.68 # only stop early if the val macro-f1 is above this value
 EARLY_STOPPING_PATIENCE = 3
 
-MAX_LENGTH = 512
+MAX_LENGTH = 256
 N_LABELS = len(LABEL2ID) # 4 SDQC
 
 LORA_TARGET_MODULES = ["query", "value"]
@@ -193,7 +193,6 @@ def train_epoch(model, dataloader, optimizer, scheduler, criterion, scaler=None)
 
 
 def evaluate(model, dataloader, loss_fn):
-    """Evaluate model on dev / test set."""
     model.eval()
     total_loss = 0
     all_preds = []
@@ -227,16 +226,7 @@ def evaluate(model, dataloader, loss_fn):
 # %%
 # pipeline
 
-def train(train_df, dev_df, verbose=True):    
-    print(f"\n{'='*60}")
-    print(f"Training with:")
-    print(f"  BATCH_SIZE={BATCH_SIZE}, LEARNING_RATE={LEARNING_RATE}, NUM_EPOCHS={NUM_EPOCHS}")
-    print(f"  LORA_R={LORA_R}, LORA_ALPHA={LORA_ALPHA}")
-    print(f"  WARMUP_RATIO={WARMUP_RATIO}, WEIGHT_DECAY={WEIGHT_DECAY}")
-    print(f"  EARLY_STOPPING_PATIENCE={EARLY_STOPPING_PATIENCE}")
-    print(f"Device: {DEVICE}")
-    print(f"{'='*60}\n")
-    
+def train(train_df, dev_df, verbose=True):        
     # get class weights for loss function
     class_weights = compute_class_weights(train_df).to(DEVICE)
     print(f"Class weights: {class_weights.cpu().numpy()}")
@@ -294,7 +284,7 @@ def train(train_df, dev_df, verbose=True):
     best_f1 = 0
     epochs_without_improvement = 0
     
-    logs = {'train_loss': [], 'val_f1': []}
+    logs = {'train_loss': [], 'train_f1': [], 'val_loss': [], 'val_f1': []}
     
     for epoch in tqdm(range(NUM_EPOCHS), desc="Epochs"):        
         # train
@@ -308,6 +298,8 @@ def train(train_df, dev_df, verbose=True):
         )
         
         logs['train_loss'].append(train_loss)
+        logs['train_f1'].append(train_f1)
+        logs['val_loss'].append(val_loss)
         logs['val_f1'].append(val_f1)
 
         print(f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f}")
@@ -347,31 +339,37 @@ if __name__ == "__main__":
     checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
     if not os.path.exists(checkpoint_path):
         print("No checkpoint found, training new model...")
-        model, tokenizer, history = train(train_df, dev_df)
+        model, tokenizer, logs = train(train_df, dev_df)
         
         # plot training diagnostics
         sns.set_theme(style="whitegrid")
         plt.figure(figsize=(12, 5))
         
-        epochs = range(1, len(history['train_loss']) + 1)
+        epochs = range(1, len(logs['train_loss']) + 1)
         
+        # loss
         plt.subplot(1, 2, 1)
-        sns.lineplot(x=epochs, y=history['train_loss'], marker='o', label='Train Loss')
-        plt.title('Training Loss vs Epoch')
+        sns.lineplot(x=epochs, y=logs['train_loss'], marker='o', label='Train Loss')
+        sns.lineplot(x=epochs, y=logs['val_loss'], marker='o', color='orange', label='Val Loss')
+        plt.title('Loss vs Epoch')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
+        plt.xlim(0)
         
+        # f1 (val more important)
         plt.subplot(1, 2, 2)
-        sns.lineplot(x=epochs, y=history['val_f1'], marker='o', color='orange', label='Val Macro F1')
-        plt.title('Validation Macro F1 vs Epoch')
+        sns.lineplot(x=epochs, y=logs['train_f1'], marker='o', label='Train Macro F1')
+        sns.lineplot(x=epochs, y=logs['val_f1'], marker='o', color='orange', label='Val Macro F1')
+        plt.title('Macro F1 vs Epoch')
         plt.xlabel('Epoch')
-        plt.ylabel('Macro F1')
+        plt.ylabel('Macro F1 Score')
+        plt.xlim(0)
         
         plt.tight_layout()
         plot_path = os.path.join(CHECKPOINT_DIR, "train_diag.png")
         plt.savefig(plot_path)
         print(f"Training diagnostics plot saved to {plot_path}")
-        plt.show()
+        plt.close()
     else:
         print(f"Loading existing checkpoint at {checkpoint_path}")
         tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, use_fast=False)
@@ -418,19 +416,19 @@ if __name__ == "__main__":
     )
     
     df_report = pd.DataFrame(report_dict).transpose()
-    # keep: per class & macro f1, precision, recall
+    # keep per class & macro f1, precision, recall
     rows_to_keep = list(LABEL2ID.keys()) + ['macro avg']
     cols_to_keep = ['precision', 'recall', 'f1-score']
     df_plot = df_report.loc[rows_to_keep, cols_to_keep]
     
     plt.figure(figsize=(10, 6))
-    sns.heatmap(df_plot, annot=True, cmap='YlGnBu', fmt='.3f')
+    sns.heatmap(df_plot, annot=True, fmt='.3f')
     plt.title('Test Metrics: Per-class & Macro F1')
     plt.tight_layout()
     plot_path_metrics = os.path.join(CHECKPOINT_DIR, "test_metrics_heatmap.png")
     plt.savefig(plot_path_metrics)
     print(f"Test metrics heatmap saved to {plot_path_metrics}")
-    plt.show()
+    plt.close()
 
     # conf matrix
     cm = confusion_matrix(test_labels, test_preds)
@@ -448,4 +446,4 @@ if __name__ == "__main__":
     plot_path_cm = os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
     plt.savefig(plot_path_cm)
     print(f"Confusion matrix heatmap saved to {plot_path_cm}")
-    plt.show()
+    plt.close()
