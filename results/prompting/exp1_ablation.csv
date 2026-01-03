@@ -1,0 +1,12 @@
+config_type,config_name,macro_f1
+isolated,minimal,0.12019874894546817
+isolated,+persona,0.1274954064116268
+isolated,+instruction,0.1353846646185356
+isolated,+input_format,0.06945848307876609
+isolated,+label_defns,0.12615489874110564
+isolated,full,0.10662706461895104
+cumulative,minimal,0.1322847463592767
+cumulative,+persona,0.13043237250554324
+cumulative,+instruction,0.15825168119151942
+cumulative,+input_format,0.06062715083720571
+cumulative,+label_defns (full),0.13646175699778698
