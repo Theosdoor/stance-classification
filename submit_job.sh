@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=BERTweet
+#SBATCH --job-name=Stance
 #SBATCH --output=overnight_%j.log
 #SBATCH --error=overnight_%j.err
 #SBATCH --partition=ug-gpu-small

@@ -31,7 +31,7 @@ np.random.seed(RANDOM_SEED)
 
 # load data
 train_df, dev_df, test_df = load_dataset()
-use_df = dev_df  # df to test on
+use_df = test_df  # df to test on
 
 # %%
 # load model

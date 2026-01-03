@@ -1,0 +1,12 @@
+Classification Report: zero-shot
+==================================================
+              precision    recall  f1-score   support
+
+     support       0.25      0.03      0.06        94
+        deny       0.13      0.72      0.22        71
+       query       0.15      0.92      0.26       106
+     comment       1.00      0.01      0.02       778
+
+    accuracy                           0.15      1049
+   macro avg       0.38      0.42      0.14      1049
+weighted avg       0.79      0.15      0.06      1049
