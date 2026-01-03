@@ -20,4 +20,4 @@ python3 -c "import torch; print(f'CUDA Available: {torch.cuda.is_available()}');
 echo "------------------------------------------------------"
 
 # 4. Run the experiments
-python3 nb_2_classifier.py
+python3 ncc_prompt.py  # run prompting experiments & save classification reports
