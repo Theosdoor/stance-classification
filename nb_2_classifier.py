@@ -224,6 +224,123 @@ def evaluate(model, dataloader, loss_fn):
     return avg_loss, macro_f1, all_preds, all_labels
 
 # %%
+# helper functions for CSV I/O (reused from prompting_experiments.py)
+
+def load_or_create_csv(path, columns):
+    """Load existing CSV or create empty DataFrame with columns."""
+    if os.path.exists(path):
+        return pd.read_csv(path)
+    return pd.DataFrame(columns=columns)
+
+def append_row_to_csv(path, row_dict):
+    """Append a single row to CSV file."""
+    df = pd.DataFrame([row_dict])
+    df.to_csv(path, mode='a', header=not os.path.exists(path), index=False)
+
+
+# %%
+# plotting functions (work from saved CSVs)
+
+def plot_training_diagnostics(csv_path=None, save_path=None):
+    """Plot training diagnostics from saved CSV."""
+    if csv_path is None:
+        csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
+    if save_path is None:
+        save_path = os.path.join(CHECKPOINT_DIR, "train_diag.png")
+    
+    logs_df = pd.read_csv(csv_path)
+    epochs = range(1, len(logs_df) + 1)
+    
+    sns.set_theme(style="whitegrid")
+    plt.figure(figsize=(12, 5))
+    
+    # loss
+    plt.subplot(1, 2, 1)
+    sns.lineplot(x=list(epochs), y=logs_df['train_loss'], marker='o', label='Train Loss')
+    sns.lineplot(x=list(epochs), y=logs_df['val_loss'], marker='o', color='orange', label='Val Loss')
+    plt.title('Loss vs Epoch')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.xlim(0)
+    
+    # f1
+    plt.subplot(1, 2, 2)
+    sns.lineplot(x=list(epochs), y=logs_df['train_f1'], marker='o', label='Train Macro F1')
+    sns.lineplot(x=list(epochs), y=logs_df['val_f1'], marker='o', color='orange', label='Val Macro F1')
+    plt.title('Macro F1 vs Epoch')
+    plt.xlabel('Epoch')
+    plt.ylabel('Macro F1 Score')
+    plt.xlim(0)
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    print(f"Training diagnostics plot saved to {save_path}")
+    plt.close()
+
+
+def plot_test_metrics_heatmap(csv_path=None, save_path=None):
+    """Plot test metrics heatmap from saved CSV."""
+    if csv_path is None:
+        csv_path = os.path.join(CHECKPOINT_DIR, "test_metrics.csv")
+    if save_path is None:
+        save_path = os.path.join(CHECKPOINT_DIR, "test_metrics_heatmap.png")
+    
+    df_plot = pd.read_csv(csv_path, index_col=0)
+    
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(df_plot, annot=True, fmt='.3f')
+    plt.title('Test Metrics: Per-class & Macro F1')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    print(f"Test metrics heatmap saved to {save_path}")
+    plt.close()
+
+
+def plot_confusion_matrix_from_csv(csv_path=None, save_path=None):
+    """Plot confusion matrix from saved CSV."""
+    if csv_path is None:
+        csv_path = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
+    if save_path is None:
+        save_path = os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
+    
+    cm = pd.read_csv(csv_path, index_col=0).values
+    
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=list(LABEL2ID.keys()), 
+                yticklabels=list(LABEL2ID.keys()))
+    plt.title('Confusion Matrix')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    print(f"Confusion matrix heatmap saved to {save_path}")
+    plt.close()
+
+
+def generate_all_classifier_plots():
+    """Generate all plots from saved CSVs (can run separately after experiments)."""
+    print("Generating classifier plots from saved CSVs...")
+    
+    # Training diagnostics
+    train_csv = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
+    if os.path.exists(train_csv):
+        plot_training_diagnostics(train_csv)
+    
+    # Test metrics heatmap
+    metrics_csv = os.path.join(CHECKPOINT_DIR, "test_metrics.csv")
+    if os.path.exists(metrics_csv):
+        plot_test_metrics_heatmap(metrics_csv)
+    
+    # Confusion matrix
+    cm_csv = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
+    if os.path.exists(cm_csv):
+        plot_confusion_matrix_from_csv(cm_csv)
+    
+    print("All classifier plots saved.")
+
+
+# %%
 # pipeline
 
 def train(train_df, dev_df, verbose=True):        
@@ -341,35 +458,14 @@ if __name__ == "__main__":
         print("No checkpoint found, training new model...")
         model, tokenizer, logs = train(train_df, dev_df)
         
-        # plot training diagnostics
-        sns.set_theme(style="whitegrid")
-        plt.figure(figsize=(12, 5))
+        # save training logs to CSV
+        logs_csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
+        logs_df = pd.DataFrame(logs)
+        logs_df.to_csv(logs_csv_path, index=False)
+        print(f"Training logs saved to {logs_csv_path}")
         
-        epochs = range(1, len(logs['train_loss']) + 1)
-        
-        # loss
-        plt.subplot(1, 2, 1)
-        sns.lineplot(x=epochs, y=logs['train_loss'], marker='o', label='Train Loss')
-        sns.lineplot(x=epochs, y=logs['val_loss'], marker='o', color='orange', label='Val Loss')
-        plt.title('Loss vs Epoch')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.xlim(0)
-        
-        # f1 (val more important)
-        plt.subplot(1, 2, 2)
-        sns.lineplot(x=epochs, y=logs['train_f1'], marker='o', label='Train Macro F1')
-        sns.lineplot(x=epochs, y=logs['val_f1'], marker='o', color='orange', label='Val Macro F1')
-        plt.title('Macro F1 vs Epoch')
-        plt.xlabel('Epoch')
-        plt.ylabel('Macro F1 Score')
-        plt.xlim(0)
-        
-        plt.tight_layout()
-        plot_path = os.path.join(CHECKPOINT_DIR, "train_diag.png")
-        plt.savefig(plot_path)
-        print(f"Training diagnostics plot saved to {plot_path}")
-        plt.close()
+        # plot from saved CSV
+        plot_training_diagnostics(logs_csv_path)
     else:
         print(f"Loading existing checkpoint at {checkpoint_path}")
         tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, use_fast=False)
@@ -408,7 +504,7 @@ if __name__ == "__main__":
     )
     print(report_str)
     
-    # Plot Classification Report
+    # save test metrics to CSV
     report_dict = classification_report(
         test_labels, test_preds, 
         target_names=list(LABEL2ID.keys()), 
@@ -416,34 +512,43 @@ if __name__ == "__main__":
     )
     
     df_report = pd.DataFrame(report_dict).transpose()
-    # keep per class & macro f1, precision, recall
     rows_to_keep = list(LABEL2ID.keys()) + ['macro avg']
     cols_to_keep = ['precision', 'recall', 'f1-score']
     df_plot = df_report.loc[rows_to_keep, cols_to_keep]
     
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(df_plot, annot=True, fmt='.3f')
-    plt.title('Test Metrics: Per-class & Macro F1')
-    plt.tight_layout()
-    plot_path_metrics = os.path.join(CHECKPOINT_DIR, "test_metrics_heatmap.png")
-    plt.savefig(plot_path_metrics)
-    print(f"Test metrics heatmap saved to {plot_path_metrics}")
-    plt.close()
+    metrics_csv_path = os.path.join(CHECKPOINT_DIR, "test_metrics.csv")
+    df_plot.to_csv(metrics_csv_path)
+    print(f"Test metrics saved to {metrics_csv_path}")
+    
+    # plot from saved CSV
+    plot_test_metrics_heatmap(metrics_csv_path)
 
-    # conf matrix
+    # save confusion matrix to CSV
     cm = confusion_matrix(test_labels, test_preds)
     print(cm)
     
-    # Plot Confusion Matrix
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=list(LABEL2ID.keys()), 
-                yticklabels=list(LABEL2ID.keys()))
-    plt.title('Confusion Matrix')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    plt.tight_layout()
-    plot_path_cm = os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
-    plt.savefig(plot_path_cm)
-    print(f"Confusion matrix heatmap saved to {plot_path_cm}")
-    plt.close()
+    cm_df = pd.DataFrame(cm, index=list(LABEL2ID.keys()), columns=list(LABEL2ID.keys()))
+    cm_csv_path = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
+    cm_df.to_csv(cm_csv_path)
+    print(f"Confusion matrix saved to {cm_csv_path}")
+    
+    # plot from saved CSV
+    plot_confusion_matrix_from_csv(cm_csv_path)
+    
+    # generate exp4-compatible classifier results CSV
+    labels = ['support', 'deny', 'query', 'comment']
+    per_class_f1 = f1_score(test_labels, test_preds, average=None, labels=[LABEL2ID[l] for l in labels])
+    
+    classifier_row = {
+        'strategy': 'classifier',
+        'repeat': 1,
+        'macro_f1': test_f1,
+        'support_f1': per_class_f1[0],
+        'deny_f1': per_class_f1[1],
+        'query_f1': per_class_f1[2],
+        'comment_f1': per_class_f1[3],
+    }
+    
+    exp4_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_exp4_results.csv")
+    pd.DataFrame([classifier_row]).to_csv(exp4_csv_path, index=False)
+    print(f"Exp4-compatible classifier results saved to {exp4_csv_path}")
