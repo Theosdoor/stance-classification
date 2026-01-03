@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stance_run
+#SBATCH --job-name=BERTweet
 #SBATCH --output=overnight_%j.log
 #SBATCH --error=overnight_%j.err
 #SBATCH --partition=ug-gpu-small
