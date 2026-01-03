@@ -504,6 +504,25 @@ if __name__ == "__main__":
     )
     print(report_str)
     
+    # save classification report to TXT
+    report_txt_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.txt")
+    with open(report_txt_path, 'w') as f:
+        f.write("Classification Report: classifier\n")
+        f.write("=" * 50 + "\n")
+        f.write(report_str)
+    print(f"Classification report saved to {report_txt_path}")
+    
+    # save classification report to CSV
+    report_dict_full = classification_report(
+        test_labels, test_preds,
+        target_names=list(LABEL2ID.keys()),
+        output_dict=True
+    )
+    report_df_full = pd.DataFrame(report_dict_full).T
+    report_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.csv")
+    report_df_full.to_csv(report_csv_path)
+    print(f"Classification report CSV saved to {report_csv_path}")
+    
     # save test metrics to CSV
     report_dict = classification_report(
         test_labels, test_preds, 
