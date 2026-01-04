@@ -462,21 +462,3 @@ def format_input_with_context(row, df, use_features=True, use_context=True, max_
     all_parts = core_parts + context_parts + parent_parts + target_parts
     return ' '.join(all_parts)
 
-
-# get specific datasets
-
-def get_train_data():
-    train_df, _, _ = load_dataset()
-    return train_df
-
-def get_dev_data():
-    _, dev_df, _ = load_dataset()
-    return dev_df
-
-def get_test_data():
-    _, _, test_df = load_dataset()
-    return test_df
-
-def get_all_data():
-    train_df, dev_df, test_df = load_dataset()
-    return pd.concat([train_df, dev_df, test_df], ignore_index=True)

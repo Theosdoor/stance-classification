@@ -24,14 +24,6 @@ STOPWORDS = nlp.Defaults.stop_words
 PROTECTED_WORDS = {'isis', 'news', 'texas', 'paris', 'alps'} # words not to lemmatize
 SAVE_DIR = './results/analytics/' # set to None to disable saving
 
-# colours for stances in plots
-STANCE_COLORS = {
-    'support': 'green',
-    'deny': 'red',
-    'query': 'blue',
-    'comment': 'gray'
-}
-
 # use regex to remove patterns
 RE_PATTERNS = [
     re.compile(r'https?://\S+|www\.\S+'), # url
@@ -64,7 +56,6 @@ sns.set_theme(style='whitegrid', font='Arial')
 
 # %%
 def tokenize(text, lemmatize=True):
-    """Tokenize: lowercase, decode HTML entities, remove URLs, mentions, punctuation, stopwords, and optionally lemmatize."""
     text = text.lower()
     
     # decode HTML entities (&amp, etc.)
@@ -104,7 +95,6 @@ def tokenize(text, lemmatize=True):
 train_df, dev_df, test_df = load_dataset()
 all_df = pd.concat([train_df, dev_df, test_df])
 
-# %%
 # class proportions
 print("\nClass proportions in TRAIN set:")
 print(train_df['label_text'].value_counts(normalize=True).mul(100))
@@ -208,7 +198,7 @@ plt.show()
 # (b) LDA analysis
 
 # vars
-n_topics = 8 # seemed good from gensim cohesion model tried during testing
+n_topics = 6 # seemed good from gensim cohesion model tried during testing
 
 # run lda for each stance (use reply_df defined earlier to only plot replies)
 stance_df = reply_df[reply_df['label_text'].isin(['support', 'deny', 'query'])]
@@ -237,7 +227,6 @@ comment_lda = LdaModel(
 
 # %%
 # topic word lists
-!pip install tabulate # for to_markdown
 n_words_to_show = 10
 
 def get_topic_words(lda_model, n_words=20):
@@ -258,23 +247,19 @@ stance_table = create_topic_table(stance_lda, n_words=n_words_to_show)
 comment_table = create_topic_table(comment_lda, n_words=n_words_to_show)
 
 print("Stance topics:")
-print(stance_table.to_markdown(index=False))
+print(stance_table)
 
 print("\nComment topics:")
-print(comment_table.to_markdown(index=False))
+print(comment_table)
 
 # %%
 # wordclouds
 n_words_to_show = 20
 
 def create_wordcloud(topics, title, save_path=None):
-    n_topics = len(topics)
+    _, axes = plt.subplots(1, len(topics), figsize=(4*len(topics), 4))
     
-    _, axes = plt.subplots(1, n_topics, figsize=(4*n_topics, 4))
-    if n_topics == 1:
-        axes = [axes]  # ensure axes is iterable for single topic
-    
-    for i, (ax, topic) in enumerate(zip(axes, topics)):
+    for i, (ax, topic) in enumerate(zip(np.atleast_1d(axes), topics)):
         word_freq = {word: score for word, score in topic}
         wc = WordCloud(width=400, height=400, background_color='white',
                        max_words=50, min_font_size=12)
@@ -298,12 +283,3 @@ create_wordcloud(stance_topics, "Stance Topics", save_path)
 comment_topics = get_topic_words(comment_lda, n_words_to_show)
 save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
 create_wordcloud(comment_topics, "Comment Topics", save_path)
-
-# %%
-# vis lda word lists with tmplot
-import tmplot as tmp
-tmp.report(stance_lda, corpus=stance_corpus, docs=stance_texts)
-
-# %%
-# comment lda vis
-tmp.report(comment_lda, corpus=comment_corpus, docs=comment_texts)

@@ -11,6 +11,7 @@ from transformers import (
     get_linear_schedule_with_warmup
 )
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
+from torch.amp import autocast, GradScaler
 from tqdm.auto import tqdm
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -30,7 +31,6 @@ LEARNING_RATE = 0.00004
 NUM_EPOCHS = 20
 WARMUP_RATIO = 0.15
 WEIGHT_DECAY = 0.05
-EARLY_STOP_VAL_F1 = 0.68 # only stop early if the val macro-f1 is above this value
 EARLY_STOPPING_PATIENCE = 3
 
 MAX_LENGTH = 256
@@ -214,104 +214,10 @@ def evaluate(model, dataloader, loss_fn):
     macro_f1 = f1_score(all_labels, all_preds, average='macro')
     
     return avg_loss, macro_f1, all_preds, all_labels
-
-# %%
-# helpers
-
-def load_or_create_csv(path, columns):
-    """Load existing CSV or create empty DataFrame with columns."""
-    if os.path.exists(path):
-        return pd.read_csv(path)
-    return pd.DataFrame(columns=columns)
-
-def append_row_to_csv(path, row_dict):
-    """Append a single row to CSV file."""
-    df = pd.DataFrame([row_dict])
-    df.to_csv(path, mode='a', header=not os.path.exists(path), index=False)
-
-
-# %%
-# plotting functions (work from saved CSVs)
-
-def plot_training_diagnostics(csv_path=None, save_path=None):
-    """Plot training diagnostics from saved CSV."""
-    csv_path = csv_path or os.path.join(CHECKPOINT_DIR, "training_logs.csv")
-    save_path = save_path or os.path.join(CHECKPOINT_DIR, "train_diag.png")
-    
-    logs_df = pd.read_csv(csv_path)
-    epochs = range(1, len(logs_df) + 1)
-    
-    sns.set_theme(style="whitegrid")
-    plt.figure(figsize=(12, 5))
-    
-    # loss
-    plt.subplot(1, 2, 1)
-    sns.lineplot(x=list(epochs), y=logs_df['train_loss'], marker='o', label='Train Loss')
-    sns.lineplot(x=list(epochs), y=logs_df['val_loss'], marker='o', color='orange', label='Val Loss')
-    plt.title('Loss vs Epoch')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.xlim(0)
-    
-    # f1
-    plt.subplot(1, 2, 2)
-    sns.lineplot(x=list(epochs), y=logs_df['train_f1'], marker='o', label='Train Macro F1')
-    sns.lineplot(x=list(epochs), y=logs_df['val_f1'], marker='o', color='orange', label='Val Macro F1')
-    plt.title('Macro F1 vs Epoch')
-    plt.xlabel('Epoch')
-    plt.ylabel('Macro F1 Score')
-    plt.xlim(0)
-    
-    plt.tight_layout()
-    plt.savefig(save_path)
-    print(f"Training diagnostics plot saved to {save_path}")
-    plt.close()
-
-
-
-def plot_confusion_matrix_from_csv(csv_path=None, save_path=None):
-    """Plot confusion matrix from saved CSV."""
-    csv_path = csv_path or os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
-    save_path = save_path or os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
-    
-    cm = pd.read_csv(csv_path, index_col=0).values
-    
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=list(LABEL2ID.keys()), 
-                yticklabels=list(LABEL2ID.keys()))
-    plt.title('Confusion Matrix')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    plt.tight_layout()
-    plt.savefig(save_path)
-    print(f"Confusion matrix heatmap saved to {save_path}")
-    plt.close()
-
-
-def generate_all_classifier_plots():
-    """Generate all plots from saved CSVs (can run separately after experiments)."""
-    print("Generating classifier plots from saved CSVs...")
-    
-    # Training diagnostics
-    train_csv = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
-    if os.path.exists(train_csv):
-        plot_training_diagnostics(train_csv)
-    
-    # Confusion matrix
-    cm_csv = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
-    if os.path.exists(cm_csv):
-        plot_confusion_matrix_from_csv(cm_csv)
-    
-    print("All classifier plots saved.")
-
-
 # %%
 # pipeline
 
-def train(train_df, dev_df, verbose=False): 
-    from torch.amp import autocast, GradScaler
-           
+def train(train_df, dev_df, verbose=False):
     # get class weights for loss function
     class_weights = compute_class_weights(train_df).to(DEVICE)
     if verbose: print(f"Class weights: {class_weights.cpu().numpy()}")
@@ -349,7 +255,7 @@ def train(train_df, dev_df, verbose=False):
     
     # mixed precision on cuda
     use_amp = DEVICE.type == "cuda"
-    scaler = GradScaler(device=DEVICE.type) if use_amp else None
+    scaler = GradScaler('cuda') if use_amp else None
     
     # train loop
     best_f1 = 0
@@ -386,8 +292,8 @@ def train(train_df, dev_df, verbose=False):
             epochs_without_improvement += 1
             if verbose: print(f"No improvement for {epochs_without_improvement} epochs")
             
-            if epochs_without_improvement >= EARLY_STOPPING_PATIENCE and val_f1 >= EARLY_STOP_VAL_F1:
-                if verbose: print(f"\nEarly stopping triggered after {epoch + 1} epochs (val F1 >= {EARLY_STOP_VAL_F1})")
+            if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
+                if verbose: print(f"\nEarly stopping triggered after {epoch + 1} epochs")
                 break
     
     return model, tokenizer, logs
@@ -401,18 +307,12 @@ train_df, dev_df, test_df = load_dataset()
 
 # %%
 # train if no checkpoint exists, else load from checkpoint
-checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
+checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model") if CHECKPOINT_DIR else None
+logs_csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv") if CHECKPOINT_DIR else None
 if not os.path.exists(checkpoint_path):
     print("No checkpoint found, training new model...")
     model, tokenizer, logs = train(train_df, dev_df)
-    
-    # save training logs to CSV
-    logs_csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
-    logs_df = pd.DataFrame(logs)
-    logs_df.to_csv(logs_csv_path, index=False)
-    
-    # plot from saved CSV
-    plot_training_diagnostics(logs_csv_path)
+    pd.DataFrame(logs).to_csv(logs_csv_path, index=False) # save training logs
 else:
     print(f"Loading existing checkpoint at {checkpoint_path}")
     tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, use_fast=False)
@@ -423,6 +323,40 @@ else:
     )
     model = PeftModel.from_pretrained(base_model, checkpoint_path)
     model = model.to(DEVICE)
+
+# %%
+# plot training logs from csv (only plot if csv exists)
+if logs_csv_path and os.path.exists(logs_csv_path):
+    logs_df = pd.read_csv(logs_csv_path)
+    epochs = range(1, len(logs_df) + 1)
+    
+    sns.set_theme(style="whitegrid")
+    plt.figure(figsize=(12, 5))
+    
+    # loss
+    plt.subplot(1, 2, 1)
+    sns.lineplot(x=list(epochs), y=logs_df['train_loss'], marker='o', label='Train Loss')
+    sns.lineplot(x=list(epochs), y=logs_df['val_loss'], marker='o', color='orange', label='Val Loss')
+    plt.title('Loss vs Epoch')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.xlim(0)
+    
+    # f1
+    plt.subplot(1, 2, 2)
+    sns.lineplot(x=list(epochs), y=logs_df['train_f1'], marker='o', label='Train Macro F1')
+    sns.lineplot(x=list(epochs), y=logs_df['val_f1'], marker='o', color='orange', label='Val Macro F1')
+    plt.title('Macro F1 vs Epoch')
+    plt.xlabel('Epoch')
+    plt.ylabel('Macro F1 Score')
+    plt.xlim(0)
+    
+    plt.tight_layout()
+    if CHECKPOINT_DIR:
+        save_path = os.path.join(CHECKPOINT_DIR, "train_diag.png")
+        plt.savefig(save_path)
+        print(f"Training diagnostics plot saved to {save_path}")
+    plt.show()
 
 # %%
 # evaluate on test set
@@ -436,46 +370,30 @@ test_loss, test_f1, test_preds, test_labels = evaluate(
     model, test_loader, loss_fn
 )
 
-print(f"Test Loss: {test_loss:.4f} | Test F1: {test_f1:.4f}")
-
-# %%
 # classification report
-report_str = classification_report(
+print(classification_report(
     test_labels, test_preds,
     target_names=list(LABEL2ID.keys())
-)
-print(report_str)
-
-# save classification report to TXT
-report_txt_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.txt")
-with open(report_txt_path, 'w') as f:
-    f.write("Classification Report: classifier\n")
-    f.write("=" * 50 + "\n")
-    f.write(report_str)
-print(f"Classification report saved to {report_txt_path}")
-
-# save classification report to CSV (reuse for test metrics)
-report_dict = classification_report(
-    test_labels, test_preds,
-    target_names=list(LABEL2ID.keys()),
-    output_dict=True
-)
-report_df = pd.DataFrame(report_dict).T
-report_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.csv")
-report_df.to_csv(report_csv_path)
-print(f"Classification report CSV saved to {report_csv_path}")
+))
 
 # %%
 # confusion matrix
 cm = confusion_matrix(test_labels, test_preds)
-print(cm)
 
-cm_df = pd.DataFrame(cm, index=list(LABEL2ID.keys()), columns=list(LABEL2ID.keys()))
-cm_csv_path = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
-cm_df.to_csv(cm_csv_path)
-print(f"Confusion matrix saved to {cm_csv_path}")
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+            xticklabels=list(LABEL2ID.keys()), 
+            yticklabels=list(LABEL2ID.keys()))
+plt.title('Confusion Matrix')
+plt.ylabel('True Label')
+plt.xlabel('Predicted Label')
+plt.tight_layout()
 
-plot_confusion_matrix_from_csv(cm_csv_path)
+if CHECKPOINT_DIR:
+    save_path = os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
+    plt.savefig(save_path)
+    print(f"Confusion matrix saved to {save_path}")
+plt.show()
 
 # %%
 # generate exp4-compatible classifier results CSV

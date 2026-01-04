@@ -1,6 +1,6 @@
 2025NLP_Assignment Brief.pdf
 practicals/
-downloaded_data/
+downloaded_data/*
 wandb/
 .vscode/
 saved_data/

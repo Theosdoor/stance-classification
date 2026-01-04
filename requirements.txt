@@ -1,35 +1,29 @@
-# Core ML
-torch
-transformers
-peft
-accelerate
-datasets
+# ml
+torch==2.9.1
+transformers==4.57.3
+peft==0.18.0
+accelerate==1.12.0
 
-# Experiment tracking
-wandb
-
-# NLP
-spacy
+# nlp
+spacy==3.8.11
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-nltk
-sentencepiece
+nltk==3.9.2
+sentencepiece==0.2.1
 emoji==0.6.0 # bertweet normalisation needs this fixed to 0.60
-gensim
-outlines # needs python >3.10
+gensim==4.4.0
+outlines==1.2.9 # needs python >3.10
 
-# Data & ML utilities
-pandas
-numpy
-scikit-learn
-tqdm
+# data & ml utilities
+pandas==2.3.3
+numpy==2.2.6
+scikit-learn==1.8.0
+tqdm==4.67.1
 
-# Visualization
-matplotlib
-seaborn
-wordcloud
-tmplot
+# visualization
+matplotlib==3.10.8
+seaborn==0.13.2
+wordcloud==1.9.5
 
-# Utilities
-python-dotenv
-protobuf
-ipykernel
+# utilities
+protobuf==6.33.2
+ipykernel==7.1.0
