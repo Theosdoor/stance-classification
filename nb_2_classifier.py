@@ -47,7 +47,7 @@ RAND_SEED = 42 # for reproducing results
 torch.manual_seed(RAND_SEED)
 np.random.seed(RAND_SEED)
 
-CHECKPOINT_DIR = "./results/classifier/special"
+CHECKPOINT_DIR = "./results/classifier/"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # %%

@@ -24,14 +24,14 @@ MAX_COT_TOKENS = 200 # max n tokens for cot response
 VALID_STANCES = ['SUPPORT', 'DENY', 'QUERY', 'COMMENT']
 RELOAD_MODEL = False # takes up lots of mem if we keep reloading
 
-RESULTS_DIR = "./results/prompting/"
+RESULTS_DIR = "./results/prompting/" # set to None to not save results
 RANDOM_SEED = 42
-os.makedirs(RESULTS_DIR, exist_ok=True)
+if RESULTS_DIR:
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 np.random.seed(RANDOM_SEED)
 
 # load data
 train_df, dev_df, test_df = load_dataset()
-use_df = test_df  # df to test on
 
 # %%
 # load model
@@ -164,69 +164,10 @@ def get_cot_examples(train_df):
         })
     return examples
 
-
-
 # %%
 def parse_cot_label(text): # get final label from cot response
     match = re.search(r'Label:\s*(SUPPORT|DENY|QUERY|COMMENT)', text, re.IGNORECASE)
     return match.group(1).lower() if match else None
-
-# %%
-
-# LLM --
-def plot_confusion_matrix(cm, mode, save_path=None):
-    """Plot confusion matrix."""
-    labels = ['support', 'deny', 'query', 'comment']
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels)
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.title(f'Confusion Matrix ({mode})')
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {save_path}")
-    plt.show()
-
-
-def save_results(results, model_key, mode):
-    """Save evaluation results to JSON."""
-    output = {
-        'model': model_key,
-        'mode': mode,
-        'macro_f1': results['macro_f1'],
-        'per_class_f1': results['per_class_f1'],
-        'predictions': results['predictions'],
-        'true_labels': results['true_labels'],
-        'raw_responses': results['raw_responses']
-    }
-    filename = f"{RESULTS_DIR}{model_key}_{mode}_results.json"
-    with open(filename, 'w') as f:
-        json.dump(output, f, indent=2)
-    print(f"Saved: {filename}")
-
-
-def save_classification_report(y_true, y_pred, mode, save_dir=RESULTS_DIR):
-    """Save classification report to text and CSV files."""
-    labels = ['support', 'deny', 'query', 'comment']
-    
-    # save text report
-    report_str = classification_report(y_true, y_pred, labels=labels, zero_division=0.0)
-    txt_path = f"{save_dir}{mode}_classification_report.txt"
-    with open(txt_path, 'w') as f:
-        f.write(f"Classification Report: {mode}\n")
-        f.write("=" * 50 + "\n")
-        f.write(report_str)
-    print(f"Saved: {txt_path}")
-    
-    # save csv report (for easier analysis)
-    report_dict = classification_report(y_true, y_pred, labels=labels, zero_division=0.0, output_dict=True)
-    report_df = pd.DataFrame(report_dict).T
-    csv_path = f"{save_dir}{mode}_classification_report.csv"
-    report_df.to_csv(csv_path)
-    print(f"Saved: {csv_path}")
-    
-    return report_str
-
 
 # %%
 # few shot examples
@@ -304,9 +245,10 @@ def get_few_shot_examples(df, n_per_class=1, use_set=None, classes=None):
 
 
 # %%
-def evaluate_prompting(model, df, mode="zero-shot", examples=None, sys_prompt_override=None, verbose=True):
+def evaluate_prompting(model, df, mode="zero-shot", examples=None, sys_prompt_override=None, verbose=True, save_name=None):
     # mode can be zero-shot or cot (for few-shot, just pass list into examples)
     # sys_prompt_override is just for ablations (cot sys prompt added automatically)
+    # save_name: if provided, saves predictions CSV and confusion matrix PNG to RESULTS_DIR
 
     # set output params
     if mode == "cot":
@@ -330,7 +272,7 @@ def evaluate_prompting(model, df, mode="zero-shot", examples=None, sys_prompt_ov
     err_ids = []
     err_responses = []
     for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Eval ({mode})"):
-        input_text = format_input_with_context(row, df, use_features=False, use_context=USE_CTX) # format with [SRC] etc
+        input_text = format_input_with_context(row, df, use_features=False, use_context=USE_CTX) # format with [SRC] etc
         messages = build_messages(input_text, examples=examples, sys_prompt=active_sys_prompt) # get messages dict
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) # get prompt string
         response = model(prompt, output_type, max_new_tokens=max_new_tokens) # get response
@@ -351,6 +293,7 @@ def evaluate_prompting(model, df, mode="zero-shot", examples=None, sys_prompt_ov
     labels = ['support', 'deny', 'query', 'comment']
     macro_f1 = f1_score(true_labels, predictions, average='macro')
     per_class_f1 = f1_score(true_labels, predictions, average=None, labels=labels)
+    cm = confusion_matrix(true_labels, predictions, labels=labels)
 
     if verbose:
         if error_count > 0:
@@ -361,10 +304,33 @@ def evaluate_prompting(model, df, mode="zero-shot", examples=None, sys_prompt_ov
                         break # only show 1st 5
         print(f"\n{classification_report(true_labels, predictions, labels=labels, zero_division=0.0)}")
     
+    # plot confusion matrix (always show for notebooks)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', xticklabels=labels, yticklabels=labels, 
+                cmap='Blues', ax=ax)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title(f'Confusion Matrix: {save_name or mode}')
+    plt.tight_layout()
+    
+    # save results if RESULTS_DIR is set and save_name is provided
+    if RESULTS_DIR and save_name:
+        # save predictions CSV
+        results_df = pd.DataFrame({'true_label': true_labels, 'predicted': predictions})
+        results_df.to_csv(f"{RESULTS_DIR}predictions_{save_name}.csv", index=False)
+        
+        # save confusion matrix PNG
+        plt.savefig(f"{RESULTS_DIR}confusion_matrix_{save_name}.png", dpi=150)
+        if verbose:
+            print(f"Saved: predictions_{save_name}.csv, confusion_matrix_{save_name}.png")
+    
+    plt.show()
+    plt.close()
+    
     return {
         'macro_f1': macro_f1,
         'per_class_f1': dict(zip(labels, per_class_f1)),
-        'confusion_matrix': confusion_matrix(true_labels, predictions, labels=labels),
+        'confusion_matrix': cm,
         'predictions_vs_responses': list(zip(predictions, raw_responses)),
         'error_ids_vs_responses': list(zip(err_ids, err_responses)) if error_count > 0 else None
     }
@@ -374,9 +340,7 @@ def evaluate_prompting(model, df, mode="zero-shot", examples=None, sys_prompt_ov
 
 # %%
 # zero-shot
-zero_results = evaluate_prompting(model, use_df, mode="zero-shot")
-zero_preds = [p for p, _ in zero_results['predictions_vs_responses']]
-save_classification_report(use_df['label_text'].tolist(), zero_preds, "zero-shot")
+zero_results = evaluate_prompting(model, test_df, mode="zero-shot", save_name="zero-shot")
 
 # %% [markdown]
 # ## Few-shot
@@ -384,44 +348,20 @@ save_classification_report(use_df['label_text'].tolist(), zero_preds, "zero-shot
 # %%
 # few-shot
 few_shot_examples = get_few_shot_examples(train_df, n_per_class=1)
-few_results = evaluate_prompting(model, use_df, mode="few-shot", examples=few_shot_examples)
-few_preds = [p for p, _ in few_results['predictions_vs_responses']]
-save_classification_report(use_df['label_text'].tolist(), few_preds, "few-shot")
-
-# %%
-
+few_results = evaluate_prompting(model, test_df, mode="few-shot", examples=few_shot_examples, save_name="few-shot")
 
 # %% [markdown]
 # ## CoT Prompting
 
 # %%
 # CoT prompting
-
-cot_results = evaluate_prompting(model, use_df, mode="cot", examples=None)
-cot_preds = [p for p, _ in cot_results['predictions_vs_responses']]
-save_classification_report(use_df['label_text'].tolist(), cot_preds, "cot")
-
-
-# %%
-# test a single eg
-row = dev_df.iloc[5]
-input_text = format_input_with_context(row, dev_df, use_features=False, use_context=USE_CTX)
-messages = build_messages(input_text, None, COT_SYS_PROMPT) 
-# messages[-1]['content'] += "\nLet's think step-by-step." # for cot
-prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-response = model(prompt, COT_REGEX, max_new_tokens=MAX_COT_TOKENS)
-print(f"Prompt: {prompt}\n")
-print(f"Response: {response}\n")
-print(f"Prediction: {parse_cot_label(response)}")
-print(f"True label: {row['label_text']}")
+cot_results = evaluate_prompting(model, test_df, mode="cot", examples=None, save_name="cot")
 
 
 # %%
 # few shot cot
 cot_few_shot_examples = get_cot_examples(train_df)
-cot_few_results = evaluate_prompting(model, use_df, mode="cot", examples=cot_few_shot_examples)
-cot_few_preds = [p for p, _ in cot_few_results['predictions_vs_responses']]
-save_classification_report(use_df['label_text'].tolist(), cot_few_preds, "few-shot-cot")
+cot_few_results = evaluate_prompting(model, test_df, mode="cot", examples=cot_few_shot_examples, save_name="few-shot-cot")
 
 # %% [markdown]
 # # Experiments
@@ -670,11 +610,11 @@ def generate_all_plots():
     csv_path = f"{RESULTS_DIR}exp4_test_final.csv"
     if os.path.exists(csv_path):
         results_df = pd.read_csv(csv_path)
-        results_df = results_df[results_df['strategy'] != 'classifier']
+        # results_df = results_df[results_df['strategy'] != 'classifier']
         if len(results_df) > 0:
             summary = results_df.groupby('strategy')['macro_f1'].agg(['mean', 'std']).reset_index()
             summary.columns = ['strategy', 'mean_f1', 'std_f1']
-            order = ['zero-shot', 'few-shot', 'cot', 'few-shot-cot']
+            order = ['classifier', 'zero-shot', 'few-shot', 'cot', 'few-shot-cot']
             summary['strategy'] = pd.Categorical(summary['strategy'], categories=order, ordered=True)
             summary = summary.sort_values('strategy')
             
@@ -683,7 +623,7 @@ def generate_all_plots():
             ax.set_xlabel('Strategy')
             ax.set_ylabel('Macro F1 (mean ± std)')
             ax.set_title('Test Set Performance Comparison (3 repeats)')
-            # ax.set_ylim(0, 0.45)
+            ax.set_ylim(0, 0.75)
             for bar, mean in zip(bars, summary['mean_f1']):
                 ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, f'{mean:.3f}', 
                         ha='center', va='bottom', fontsize=10)
