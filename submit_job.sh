@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=Stance
-#SBATCH --output=overnight_%j.log
-#SBATCH --error=overnight_%j.err
+#SBATCH --output=slurm_%j.log
+#SBATCH --error=slurm_%j.err
 #SBATCH --partition=ug-gpu-small
 #SBATCH --gres=gpu:turing:1
 #SBATCH --time=24:00:00
@@ -20,4 +20,4 @@ python3 -c "import torch; print(f'CUDA Available: {torch.cuda.is_available()}');
 echo "------------------------------------------------------"
 
 # 4. Run the experiments
-python3 ncc_prompt.py  # run prompting experiments & save classification reports
+python3 nb_2_classifier.py

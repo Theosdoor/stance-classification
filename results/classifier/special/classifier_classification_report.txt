@@ -1,0 +1,12 @@
+Classification Report: classifier
+==================================================
+              precision    recall  f1-score   support
+
+     support       0.27      0.47      0.34        94
+        deny       0.24      0.63      0.35        71
+       query       0.68      0.78      0.73       106
+     comment       0.90      0.67      0.77       778
+
+    accuracy                           0.66      1049
+   macro avg       0.52      0.64      0.55      1049
+weighted avg       0.78      0.66      0.70      1049

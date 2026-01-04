@@ -1,0 +1,12 @@
+Classification Report: cot
+==================================================
+              precision    recall  f1-score   support
+
+     support       0.18      0.32      0.23        94
+        deny       0.16      0.45      0.24        71
+       query       0.43      0.53      0.48       106
+     comment       0.80      0.57      0.66       778
+
+    accuracy                           0.53      1049
+   macro avg       0.39      0.47      0.40      1049
+weighted avg       0.66      0.53      0.58      1049
