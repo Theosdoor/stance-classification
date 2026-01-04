@@ -175,7 +175,7 @@ counters = all_df.groupby('group')['tokens'].sum().apply(Counter).to_dict() # ge
 
 # 2 - compute log-odds and get top words
 comparisons = [
-    ('source_stance', 'reply_stance', 'Stance (S/D/Q)'),
+    ('source_stance', 'reply_stance', 'Stance (SDQ)'),
     ('source_comment', 'reply_comment', 'Comment')
 ]
 
@@ -208,7 +208,7 @@ plt.show()
 # (b) LDA analysis
 
 # vars
-n_topics = 6 # seemed good from gensim cohesion model tried during testing
+n_topics = 8 # seemed good from gensim cohesion model tried during testing
 
 # run lda for each stance (use reply_df defined earlier to only plot replies)
 stance_df = reply_df[reply_df['label_text'].isin(['support', 'deny', 'query'])]
@@ -236,15 +236,36 @@ comment_lda = LdaModel(
 )
 
 # %%
-# wordclouds
+# topic word lists
+!pip install tabulate # for to_markdown
+n_words_to_show = 10
+
 def get_topic_words(lda_model, n_words=20):
     topics = []
     for topic_id in range(lda_model.num_topics):
-        # get_topic_terms returns (word_id, probability) pairs
         top_terms = lda_model.get_topic_terms(topic_id, topn=n_words)
         top_words = [(lda_model.id2word[word_id], prob) for word_id, prob in top_terms]
         topics.append(top_words)
     return topics
+
+def create_topic_table(lda_model, n_words=10):
+    """Create a DataFrame of top words per topic for easy export."""
+    topics = get_topic_words(lda_model, n_words)
+    table_data = {f'Topic {i+1}': [word for word, _ in topic] for i, topic in enumerate(topics)}
+    return pd.DataFrame(table_data)
+
+stance_table = create_topic_table(stance_lda, n_words=n_words_to_show)
+comment_table = create_topic_table(comment_lda, n_words=n_words_to_show)
+
+print("Stance topics:")
+print(stance_table.to_markdown(index=False))
+
+print("\nComment topics:")
+print(comment_table.to_markdown(index=False))
+
+# %%
+# wordclouds
+n_words_to_show = 20
 
 def create_wordcloud(topics, title, save_path=None):
     n_topics = len(topics)
@@ -270,11 +291,11 @@ def create_wordcloud(topics, title, save_path=None):
         print(f"Saved: {save_path}")
     plt.show()
 
-stance_topics = get_topic_words(stance_lda)
+stance_topics = get_topic_words(stance_lda, n_words_to_show)
 save_path = SAVE_DIR + "stance_wordcloud.png" if SAVE_DIR else None
 create_wordcloud(stance_topics, "Stance Topics", save_path)
 
-comment_topics = get_topic_words(comment_lda)
+comment_topics = get_topic_words(comment_lda, n_words_to_show)
 save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
 create_wordcloud(comment_topics, "Comment Topics", save_path)
 
