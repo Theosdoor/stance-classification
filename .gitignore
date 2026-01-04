@@ -4,7 +4,6 @@ downloaded_data/*
 wandb/
 .vscode/
 saved_data/
-secrets
 
 *.err
 
