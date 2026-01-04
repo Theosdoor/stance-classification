@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from torch.amp import autocast, GradScaler
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
 from transformers import (
     AutoTokenizer, 
@@ -105,15 +104,8 @@ def compute_class_weights(train_df):
         weight for class i = total_samples / (num_classes * count_i)
     """
     label_counts = train_df['label'].value_counts().sort_index()
-    total_samples = len(train_df)
-    num_classes = len(label_counts)
-    
-    weights = []
-    for label_id in range(num_classes):
-        count = label_counts.get(label_id, 1)
-        weight = total_samples / (num_classes * count)
-        weights.append(weight)
-    
+    n, k = len(train_df), len(label_counts)
+    weights = [n / (k * label_counts.get(i, 1)) for i in range(k)]
     return torch.tensor(weights, dtype=torch.float32)
 
 def create_model():    
@@ -224,7 +216,7 @@ def evaluate(model, dataloader, loss_fn):
     return avg_loss, macro_f1, all_preds, all_labels
 
 # %%
-# helper functions for CSV I/O (reused from prompting_experiments.py)
+# helpers
 
 def load_or_create_csv(path, columns):
     """Load existing CSV or create empty DataFrame with columns."""
@@ -243,10 +235,8 @@ def append_row_to_csv(path, row_dict):
 
 def plot_training_diagnostics(csv_path=None, save_path=None):
     """Plot training diagnostics from saved CSV."""
-    if csv_path is None:
-        csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
-    if save_path is None:
-        save_path = os.path.join(CHECKPOINT_DIR, "train_diag.png")
+    csv_path = csv_path or os.path.join(CHECKPOINT_DIR, "training_logs.csv")
+    save_path = save_path or os.path.join(CHECKPOINT_DIR, "train_diag.png")
     
     logs_df = pd.read_csv(csv_path)
     epochs = range(1, len(logs_df) + 1)
@@ -278,30 +268,11 @@ def plot_training_diagnostics(csv_path=None, save_path=None):
     plt.close()
 
 
-def plot_test_metrics_heatmap(csv_path=None, save_path=None):
-    """Plot test metrics heatmap from saved CSV."""
-    if csv_path is None:
-        csv_path = os.path.join(CHECKPOINT_DIR, "test_metrics.csv")
-    if save_path is None:
-        save_path = os.path.join(CHECKPOINT_DIR, "test_metrics_heatmap.png")
-    
-    df_plot = pd.read_csv(csv_path, index_col=0)
-    
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(df_plot, annot=True, fmt='.3f')
-    plt.title('Test Metrics: Per-class & Macro F1')
-    plt.tight_layout()
-    plt.savefig(save_path)
-    print(f"Test metrics heatmap saved to {save_path}")
-    plt.close()
-
 
 def plot_confusion_matrix_from_csv(csv_path=None, save_path=None):
     """Plot confusion matrix from saved CSV."""
-    if csv_path is None:
-        csv_path = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
-    if save_path is None:
-        save_path = os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
+    csv_path = csv_path or os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
+    save_path = save_path or os.path.join(CHECKPOINT_DIR, "test_confusion_matrix.png")
     
     cm = pd.read_csv(csv_path, index_col=0).values
     
@@ -327,11 +298,6 @@ def generate_all_classifier_plots():
     if os.path.exists(train_csv):
         plot_training_diagnostics(train_csv)
     
-    # Test metrics heatmap
-    metrics_csv = os.path.join(CHECKPOINT_DIR, "test_metrics.csv")
-    if os.path.exists(metrics_csv):
-        plot_test_metrics_heatmap(metrics_csv)
-    
     # Confusion matrix
     cm_csv = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
     if os.path.exists(cm_csv):
@@ -343,33 +309,21 @@ def generate_all_classifier_plots():
 # %%
 # pipeline
 
-def train(train_df, dev_df, verbose=True):        
+def train(train_df, dev_df, verbose=False): 
+    from torch.amp import autocast, GradScaler
+           
     # get class weights for loss function
     class_weights = compute_class_weights(train_df).to(DEVICE)
-    print(f"Class weights: {class_weights.cpu().numpy()}")
+    if verbose: print(f"Class weights: {class_weights.cpu().numpy()}")
     
     # tokenizer and load datasets
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
     
-    train_dataset = InputDataset(
-        train_df, tokenizer, max_length=MAX_LENGTH,
-        use_context=True, use_features=True
-    )
-    dev_dataset = InputDataset(
-        dev_df, tokenizer, max_length=MAX_LENGTH,
-        use_context=True, use_features=True
-    )
+    train_dataset = InputDataset(train_df, tokenizer, MAX_LENGTH)
+    dev_dataset = InputDataset(dev_df, tokenizer, MAX_LENGTH)
 
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=BATCH_SIZE, 
-        shuffle=True,
-    )
-    dev_loader = DataLoader(
-        dev_dataset, 
-        batch_size=BATCH_SIZE, 
-        shuffle=False,
-    )
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    dev_loader = DataLoader(dev_dataset, batch_size=BATCH_SIZE, shuffle=False)
     
     # init model
     model = create_model()
@@ -418,9 +372,6 @@ def train(train_df, dev_df, verbose=True):
         logs['train_f1'].append(train_f1)
         logs['val_loss'].append(val_loss)
         logs['val_f1'].append(val_f1)
-
-        print(f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f}")
-        print(f"Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f}")
         
         # save best model
         if val_f1 > best_f1:
@@ -431,14 +382,12 @@ def train(train_df, dev_df, verbose=True):
             checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
             model.save_pretrained(checkpoint_path)
             tokenizer.save_pretrained(checkpoint_path)
-            
-            print(f"New model saved! F1: {best_f1:.4f}")
         else:
             epochs_without_improvement += 1
-            print(f"No improvement for {epochs_without_improvement} epochs")
+            if verbose: print(f"No improvement for {epochs_without_improvement} epochs")
             
             if epochs_without_improvement >= EARLY_STOPPING_PATIENCE and val_f1 >= EARLY_STOP_VAL_F1:
-                print(f"\nEarly stopping triggered after {epoch + 1} epochs (val F1 >= {EARLY_STOP_VAL_F1})")
+                if verbose: print(f"\nEarly stopping triggered after {epoch + 1} epochs (val F1 >= {EARLY_STOP_VAL_F1})")
                 break
     
     return model, tokenizer, logs
@@ -447,127 +396,102 @@ def train(train_df, dev_df, verbose=True):
 # # Analysis
 
 # %%
-# load / train and evaluate
-if __name__ == "__main__":
-    # load data
-    train_df, dev_df, test_df = load_dataset()
+# load data
+train_df, dev_df, test_df = load_dataset()
 
-    # train if no checkpoint exists, else load from checkpoint
-    checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
-    if not os.path.exists(checkpoint_path):
-        print("No checkpoint found, training new model...")
-        model, tokenizer, logs = train(train_df, dev_df)
-        
-        # save training logs to CSV
-        logs_csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
-        logs_df = pd.DataFrame(logs)
-        logs_df.to_csv(logs_csv_path, index=False)
-        print(f"Training logs saved to {logs_csv_path}")
-        
-        # plot from saved CSV
-        plot_training_diagnostics(logs_csv_path)
-    else:
-        print(f"Loading existing checkpoint at {checkpoint_path}")
-        tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, use_fast=False)
-        base_model = AutoModelForSequenceClassification.from_pretrained(
-            MODEL_NAME,
-            num_labels=N_LABELS,
-            problem_type="single_label_classification"
-        )
-        model = PeftModel.from_pretrained(base_model, checkpoint_path)
-        model = model.to(DEVICE)
-        
-    # evaluate on test set
-    test_dataset = InputDataset(
-        test_df, tokenizer, max_length=MAX_LENGTH,
-        use_context=True, use_features=True
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False
-    )
+# %%
+# train if no checkpoint exists, else load from checkpoint
+checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_model")
+if not os.path.exists(checkpoint_path):
+    print("No checkpoint found, training new model...")
+    model, tokenizer, logs = train(train_df, dev_df)
     
-    class_weights = compute_class_weights(train_df).to(DEVICE)
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights)
-    
-    test_loss, test_f1, test_preds, test_labels = evaluate(
-        model, test_loader, loss_fn
-    )
-
-    print(f"Test Loss: {test_loss:.4f} | Test F1: {test_f1:.4f}")
-    
-    # report
-    report_str = classification_report(
-        test_labels, test_preds,
-        target_names=list(LABEL2ID.keys())
-    )
-    print(report_str)
-    
-    # save classification report to TXT
-    report_txt_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.txt")
-    with open(report_txt_path, 'w') as f:
-        f.write("Classification Report: classifier\n")
-        f.write("=" * 50 + "\n")
-        f.write(report_str)
-    print(f"Classification report saved to {report_txt_path}")
-    
-    # save classification report to CSV
-    report_dict_full = classification_report(
-        test_labels, test_preds,
-        target_names=list(LABEL2ID.keys()),
-        output_dict=True
-    )
-    report_df_full = pd.DataFrame(report_dict_full).T
-    report_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.csv")
-    report_df_full.to_csv(report_csv_path)
-    print(f"Classification report CSV saved to {report_csv_path}")
-    
-    # save test metrics to CSV
-    report_dict = classification_report(
-        test_labels, test_preds, 
-        target_names=list(LABEL2ID.keys()), 
-        output_dict=True
-    )
-    
-    df_report = pd.DataFrame(report_dict).transpose()
-    rows_to_keep = list(LABEL2ID.keys()) + ['macro avg']
-    cols_to_keep = ['precision', 'recall', 'f1-score']
-    df_plot = df_report.loc[rows_to_keep, cols_to_keep]
-    
-    metrics_csv_path = os.path.join(CHECKPOINT_DIR, "test_metrics.csv")
-    df_plot.to_csv(metrics_csv_path)
-    print(f"Test metrics saved to {metrics_csv_path}")
+    # save training logs to CSV
+    logs_csv_path = os.path.join(CHECKPOINT_DIR, "training_logs.csv")
+    logs_df = pd.DataFrame(logs)
+    logs_df.to_csv(logs_csv_path, index=False)
     
     # plot from saved CSV
-    plot_test_metrics_heatmap(metrics_csv_path)
+    plot_training_diagnostics(logs_csv_path)
+else:
+    print(f"Loading existing checkpoint at {checkpoint_path}")
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, use_fast=False)
+    base_model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME,
+        num_labels=N_LABELS,
+        problem_type="single_label_classification"
+    )
+    model = PeftModel.from_pretrained(base_model, checkpoint_path)
+    model = model.to(DEVICE)
 
-    # save confusion matrix to CSV
-    cm = confusion_matrix(test_labels, test_preds)
-    print(cm)
-    
-    cm_df = pd.DataFrame(cm, index=list(LABEL2ID.keys()), columns=list(LABEL2ID.keys()))
-    cm_csv_path = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
-    cm_df.to_csv(cm_csv_path)
-    print(f"Confusion matrix saved to {cm_csv_path}")
-    
-    # plot from saved CSV
-    plot_confusion_matrix_from_csv(cm_csv_path)
-    
-    # generate exp4-compatible classifier results CSV
-    labels = ['support', 'deny', 'query', 'comment']
-    per_class_f1 = f1_score(test_labels, test_preds, average=None, labels=[LABEL2ID[l] for l in labels])
-    
-    classifier_row = {
-        'strategy': 'classifier',
-        'repeat': 1,
-        'macro_f1': test_f1,
-        'support_f1': per_class_f1[0],
-        'deny_f1': per_class_f1[1],
-        'query_f1': per_class_f1[2],
-        'comment_f1': per_class_f1[3],
-    }
-    
-    exp4_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_exp4_results.csv")
-    pd.DataFrame([classifier_row]).to_csv(exp4_csv_path, index=False)
-    print(f"Exp4-compatible classifier results saved to {exp4_csv_path}")
+# %%
+# evaluate on test set
+test_dataset = InputDataset(test_df, tokenizer, MAX_LENGTH)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+class_weights = compute_class_weights(train_df).to(DEVICE)
+loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+
+test_loss, test_f1, test_preds, test_labels = evaluate(
+    model, test_loader, loss_fn
+)
+
+print(f"Test Loss: {test_loss:.4f} | Test F1: {test_f1:.4f}")
+
+# %%
+# classification report
+report_str = classification_report(
+    test_labels, test_preds,
+    target_names=list(LABEL2ID.keys())
+)
+print(report_str)
+
+# save classification report to TXT
+report_txt_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.txt")
+with open(report_txt_path, 'w') as f:
+    f.write("Classification Report: classifier\n")
+    f.write("=" * 50 + "\n")
+    f.write(report_str)
+print(f"Classification report saved to {report_txt_path}")
+
+# save classification report to CSV (reuse for test metrics)
+report_dict = classification_report(
+    test_labels, test_preds,
+    target_names=list(LABEL2ID.keys()),
+    output_dict=True
+)
+report_df = pd.DataFrame(report_dict).T
+report_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_classification_report.csv")
+report_df.to_csv(report_csv_path)
+print(f"Classification report CSV saved to {report_csv_path}")
+
+# %%
+# confusion matrix
+cm = confusion_matrix(test_labels, test_preds)
+print(cm)
+
+cm_df = pd.DataFrame(cm, index=list(LABEL2ID.keys()), columns=list(LABEL2ID.keys()))
+cm_csv_path = os.path.join(CHECKPOINT_DIR, "confusion_matrix.csv")
+cm_df.to_csv(cm_csv_path)
+print(f"Confusion matrix saved to {cm_csv_path}")
+
+plot_confusion_matrix_from_csv(cm_csv_path)
+
+# %%
+# generate exp4-compatible classifier results CSV
+labels = ['support', 'deny', 'query', 'comment']
+per_class_f1 = f1_score(test_labels, test_preds, average=None, labels=[LABEL2ID[l] for l in labels])
+
+classifier_row = {
+    'strategy': 'classifier',
+    'repeat': 1,
+    'macro_f1': test_f1,
+    'support_f1': per_class_f1[0],
+    'deny_f1': per_class_f1[1],
+    'query_f1': per_class_f1[2],
+    'comment_f1': per_class_f1[3],
+}
+
+exp4_csv_path = os.path.join(CHECKPOINT_DIR, "classifier_exp4_results.csv")
+pd.DataFrame([classifier_row]).to_csv(exp4_csv_path, index=False)
+print(f"Exp4-compatible classifier results saved to {exp4_csv_path}")
