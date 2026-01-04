@@ -146,9 +146,11 @@ for label in labels:
 
 # %%
 # (a) comparing token distributions
+top_n = 12 # top n to plot
+min_occurence = 10 # min count for words to include
 
 def compute_log_odds_ratio(counter_a, counter_b, prior=0.5):
-    """Compute log-odds ratio with Jeffreys prior smoothing."""
+    # from stackoverflow - uses jeffreys prior smoothing
     all_words = set(counter_a.keys()) | set(counter_b.keys())
     total_a, total_b = sum(counter_a.values()), sum(counter_b.values())
     n = len(all_words)
@@ -157,12 +159,11 @@ def compute_log_odds_ratio(counter_a, counter_b, prior=0.5):
                        ((counter_b.get(w, 0) + prior) / (total_b + prior * n)))
             for w in all_words}
 
-def get_top_log_odds_words(log_odds, counter_a, counter_b, n=12, min_count=10):
-    """Filter by frequency and return top n words for each direction."""
+def get_top_log_odds_words(log_odds, counter_a, counter_b, n=top_n, min_count=min_occurence):
     filtered = {w: v for w, v in log_odds.items() 
                 if counter_a.get(w, 0) + counter_b.get(w, 0) >= min_count}
     sorted_words = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
-    return sorted_words[-n:][::-1] + sorted_words[:n]  # reply first, then source
+    return sorted_words[-n:][::-1] + sorted_words[:n] # reply on LHS, then source on rhs
 
 # 1 - group tokens by source/reply and stance/comment
 all_df = all_df.copy()
@@ -196,7 +197,6 @@ for ax in g.axes.flat:
     ax.set_xlabel(f'Log-Odds Ratio ({r"$\log_2$"})')
     ax.set_ylabel('')
     ax.set_title(f'{ax.get_title().replace("panel = ", "")}\n← Reply | Source →')
-g.add_legend(title='')
 g.tight_layout()
 
 if SAVE_DIR:
@@ -206,73 +206,26 @@ plt.show()
 
 # %%
 # (b) LDA analysis
-def get_topic_words(lda_model, n_words=20):
-    topics = []
-    for topic_id in range(lda_model.num_topics):
-        # get_topic_terms returns (word_id, probability) pairs
-        top_terms = lda_model.get_topic_terms(topic_id, topn=n_words)
-        top_words = [(lda_model.id2word[word_id], prob) for word_id, prob in top_terms]
-        topics.append(top_words)
-    return topics
 
-def print_topics(topics, title):
-    print(f"{title} - LDA topics:")
-    for i, topic in enumerate(topics):
-        words = [w for w, _ in topic]
-        print(f"[{i}]: {', '.join(words)}")
+# vars
+n_topics = 6 # seemed good from gensim cohesion model tried during testing
 
-def create_wordcloud(topics, title, save_path=None):
-    n_topics = len(topics)
-    n_cols = (n_topics + 1) // 2
-    n_rows = 2 if n_topics > 1 else 1
-    
-    _, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 4*n_rows))
-    axes = axes.flatten() if n_topics > 1 else [axes]
-    
-    for i, topic in enumerate(topics):
-        ax = axes[i]
-        word_freq = {word: score for word, score in topic}
-        wc = WordCloud(width=400, height=400, background_color='white',
-                        max_words=50, min_font_size=12, prefer_horizontal=0.9)
-        wc.generate_from_frequencies(word_freq)
-        ax.imshow(wc, interpolation='bilinear')
-        ax.set_title(f'Topic {i+1}', fontsize=14)
-        ax.axis('off')
-    
-    # hide unused subplots if odd number of topics
-    for j in range(n_topics, len(axes)):
-        axes[j].axis('off')
-    
-    plt.suptitle(title, fontsize=16)
-    plt.tight_layout()
-    
-    if save_path: 
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {save_path}")
-    plt.show()
-
-# 1 - vars
-n_topics = 8
-
-# 2 - run LDA for each stance (use reply_df defined earlier to only plot replies)
+# run lda for each stance (use reply_df defined earlier to only plot replies)
 stance_df = reply_df[reply_df['label_text'].isin(['support', 'deny', 'query'])]
 comment_df = reply_df[reply_df['label_text'] == 'comment']
-
-print(f"\nStance samples (S/D/Q): {len(stance_df)}")
-print(f"Comment samples: {len(comment_df)}")
 
 # tokenize
 stance_texts = stance_df['text'].apply(tokenize).tolist()
 comment_texts = comment_df['text'].apply(tokenize).tolist()
 
-# build corpus and dictionary
+# build corpora and dicts
 stance_id2word = corpora.Dictionary(stance_texts)
 stance_corpus = [stance_id2word.doc2bow(text) for text in stance_texts]
 
 comment_id2word = corpora.Dictionary(comment_texts)
 comment_corpus = [comment_id2word.doc2bow(text) for text in comment_texts]
 
-# train LDA models
+# train models
 stance_lda = LdaModel(
     corpus=stance_corpus, id2word=stance_id2word, num_topics=n_topics,
     passes=20, random_state=RAND_SEED, alpha='auto', eta='auto'
@@ -284,20 +237,46 @@ comment_lda = LdaModel(
 
 # %%
 # wordclouds
+def get_topic_words(lda_model, n_words=20):
+    topics = []
+    for topic_id in range(lda_model.num_topics):
+        # get_topic_terms returns (word_id, probability) pairs
+        top_terms = lda_model.get_topic_terms(topic_id, topn=n_words)
+        top_words = [(lda_model.id2word[word_id], prob) for word_id, prob in top_terms]
+        topics.append(top_words)
+    return topics
 
-# stance wordcloud
+def create_wordcloud(topics, title, save_path=None):
+    n_topics = len(topics)
+    
+    _, axes = plt.subplots(1, n_topics, figsize=(4*n_topics, 4))
+    if n_topics == 1:
+        axes = [axes]  # ensure axes is iterable for single topic
+    
+    for i, (ax, topic) in enumerate(zip(axes, topics)):
+        word_freq = {word: score for word, score in topic}
+        wc = WordCloud(width=400, height=400, background_color='white',
+                       max_words=50, min_font_size=12)
+        wc.generate_from_frequencies(word_freq)
+        ax.imshow(wc, interpolation='bilinear')
+        ax.set_title(f'Topic {i+1}', fontsize=20, fontweight='bold')
+        ax.axis('off')
+    
+    plt.suptitle(title, fontsize=24, fontweight='bold')
+    plt.tight_layout()
+    
+    if save_path: 
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+    plt.show()
+
 stance_topics = get_topic_words(stance_lda)
-print_topics(stance_topics, "Stance Replies (S/D/Q)")
-
 save_path = SAVE_DIR + "stance_wordcloud.png" if SAVE_DIR else None
-create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", save_path)
+create_wordcloud(stance_topics, "Stance Topics", save_path)
 
-# comment wordcloud
 comment_topics = get_topic_words(comment_lda)
-print_topics(comment_topics, "Comment Replies")
-
 save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
-create_wordcloud(comment_topics, "Comment Replies Topics", save_path)
+create_wordcloud(comment_topics, "Comment Topics", save_path)
 
 # %%
 # vis lda word lists with tmplot
