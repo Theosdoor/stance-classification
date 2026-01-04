@@ -1,3 +1,11 @@
+'''
+NOTE
+The code in this file was stiched from several sources (cited in comments), and genAI was also used for some bug-fixing
+to ensure the functions were compatible with pandas etc
+
+genAI was not used to help write any code that is marked (i.e. nb_1,2,3)
+'''
+
 import os
 import re
 import json
@@ -114,13 +122,13 @@ def extract_features(tweet_json, depth=0):
 # process twitter thread
 
 def load_json(path):
-    """Load a JSON file."""
+    # load json file
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
 def load_tweet(path):
-    """Load tweet JSON from file."""
+    # load tweet json from file
     try:
         return load_json(path)
     except Exception as e:
@@ -129,11 +137,7 @@ def load_tweet(path):
 
 
 def build_thread_data(thread_path, labels, topic=None):
-    """
-    Build tweet data for all tweets in a thread.
-    
-    Returns list of tweet dicts with context chain and features.
-    """
+    # get list of tweet dicts with contexxt chain and features (data for all tweets in thread)
     source_dir = os.path.join(thread_path, 'source-tweet')
     replies_dir = os.path.join(thread_path, 'replies')
     structure_path = os.path.join(thread_path, 'structure.json')
@@ -182,12 +186,7 @@ def build_thread_data(thread_path, labels, topic=None):
     traverse_structure(structure, source_id, 1)
     
     def get_context_chain(tweet_id):
-        """Get texts from source to parent (excluding source, parent, and target).
-        
-        For a chain: source → A → B → C → tweet
-        - parent = C
-        - context_chain = [A, B] (intermediate tweets between source and parent)
-        """
+        # texts BETWEEN src and parent ('context' tweets in figure)
         if tweet_id not in parent_map:
             return []
         
@@ -259,7 +258,7 @@ def build_thread_data(thread_path, labels, topic=None):
 
 
 def process_data_root(data_root, labels, is_test=False):
-    """Process all threads in a data root directory."""
+    # process all tweets in root dir
     all_tweets = []
     
     if is_test:
@@ -340,7 +339,7 @@ def format_feature_string(features, keys=None):
 _tweet_tokenizer = TweetTokenizer()
 
 def _normalise_token(token):
-    '''Normalize a single token.
+    '''normalize a single token
     
     From https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py
     '''
@@ -361,9 +360,9 @@ def _normalise_token(token):
 
 
 def normalise_tweet(tweet):
-    '''Normalize tweet text for BERTweet.
+    '''normalize tweet text for BERTweet
     
-    From https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py
+    from https://github.com/VinAIResearch/BERTweet/blob/master/TweetNormalizer.py
     '''
     if not tweet:
         return tweet
@@ -399,14 +398,14 @@ def normalise_tweet(tweet):
 
 def format_input_with_context(row, df, use_features=True, use_context=True, max_tokens=None, tokenizer=None, normalise_tweets=True):
     """
-    Format input for classifier with context and features.
+    format input for classifier with context and features
     
-    Format: [SRC] source [SRC_F] features [CTX] context [PARENT] parent [PARENT_F] features [TARGET] target [TARGET_F] features
+    format: [SRC] source [SRC_F] features [CTX] context [PARENT] parent [PARENT_F] features [TARGET] target [TARGET_F] features
     
-    If max_tokens and tokenizer are provided, truncates context first if needed.
-    If normalise_tweets is True, applies BERTweet normalization to tweet text.
+    if max_tokens and tokenizer are provided, truncates context first if needed
+    if normalise_tweets is True, applies BERTweet normalization to tweet text
 
-    From https://aclanthology.org/S19-2191.pdf
+    from https://aclanthology.org/S19-2191.pdf
     """
     _norm = normalise_tweet if normalise_tweets else lambda x: x
     target_text = _norm(row['text'])
