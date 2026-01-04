@@ -4,6 +4,7 @@ import html
 import re
 import string
 from collections import Counter # like dict except returns 0 rather than key error
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
@@ -123,7 +124,6 @@ top_n = 10 # top n to plot
 
 # 2 - get unigrams and bigrams
 def get_bigrams(tokens):
-    """Generate bigrams from a list of tokens."""
     return [(tokens[i], tokens[i+1]) for i in range(len(tokens)-1)]
 
 unigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
@@ -137,87 +137,70 @@ for _, row in reply_df.iterrows():
 # 3 - print top unigrams and bigrams by stance
 labels = ['support', 'deny', 'query', 'comment']
 
-print("\n=== Top Unigrams and Bigrams by Stance ===\n")
 for label in labels:
     top_uni = unigrams[label].most_common(top_n)
     top_bi = bigrams[label].most_common(top_n)
-    print(f"--- {label.upper()} ---")
-    print(f"  Unigrams: {', '.join([w for w, _ in top_uni])}")
-    print(f"  Bigrams:  {', '.join([' '.join(b) for b, _ in top_bi])}")
-    print()
+    print(f"{label.upper()}")
+    print(f"unigrams: {', '.join([w for w, _ in top_uni])}")
+    print(f"bigrams:  {', '.join([' '.join(b) for b, _ in top_bi])}\n")
 
 # %%
 # (a) comparing token distributions
 
-def compare_source_vs_reply_distributions(df):
-    # 4 categories: source_stance, source_non_stance, reply_stance, reply_non_stance
-    distributions = {
-        'source_stance': Counter(),
-        'source_non_stance': Counter(),
-        'reply_stance': Counter(),
-        'reply_non_stance': Counter(),
-    }
-    counts = {k: 0 for k in distributions}
+def compute_log_odds_ratio(counter_a, counter_b, prior=0.5):
+    """Compute log-odds ratio with Jeffreys prior smoothing."""
+    all_words = set(counter_a.keys()) | set(counter_b.keys())
+    total_a, total_b = sum(counter_a.values()), sum(counter_b.values())
+    n = len(all_words)
     
-    def process_row(row):
-        tokens = tokenize(row['text'])
-        is_source = row['source_id'] is None or (isinstance(row['source_id'], float) and pd.isna(row['source_id']))
-        is_stance = row['label_text'] != 'comment'
-        
-        if is_source and is_stance:
-            key = 'source_stance'
-        elif is_source and not is_stance:
-            key = 'source_non_stance'
-        elif not is_source and is_stance:
-            key = 'reply_stance'
-        else:
-            key = 'reply_non_stance'
-        
-        distributions[key].update(tokens)
-        counts[key] += 1
-    
-    df.apply(process_row, axis=1)
-    return {k: {'tokens': distributions[k], 'count': counts[k]} for k in distributions}
+    return {w: np.log2((counter_a.get(w, 0) + prior) / (total_a + prior * n) /
+                       ((counter_b.get(w, 0) + prior) / (total_b + prior * n)))
+            for w in all_words}
 
-# 1 - vars
-top_n = 15
+def get_top_log_odds_words(log_odds, counter_a, counter_b, n=12, min_count=10):
+    """Filter by frequency and return top n words for each direction."""
+    filtered = {w: v for w, v in log_odds.items() 
+                if counter_a.get(w, 0) + counter_b.get(w, 0) >= min_count}
+    sorted_words = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+    return sorted_words[-n:][::-1] + sorted_words[:n]  # reply first, then source
 
-# 2 - get distributions
-distributions = compare_source_vs_reply_distributions(all_df)
+# 1 - group tokens by source/reply and stance/comment
+all_df = all_df.copy()
+all_df['tokens'] = all_df['text'].apply(tokenize)
+all_df['group'] = (all_df['source_id'].isna().map({True: 'source', False: 'reply'}) + '_' +
+                   (all_df['label_text'] != 'comment').map({True: 'stance', False: 'comment'}))
 
-# 3 - plot
-_, axes = plt.subplots(2, 2, figsize=(12, 10))
-plot_configs = [
-    # (row, col, category, title, color)
-    (0, 0, 'source_stance', 'SOURCE Text - Stance (S/D/Q)', 'orange'),
-    (0, 1, 'source_non_stance', 'SOURCE Text - Non-stance (C)', 'gray'),
-    (1, 0, 'reply_stance', 'REPLY Text - Stance (S/D/Q)', 'red'),
-    (1, 1, 'reply_non_stance', 'REPLY Text - Non-stance (C)', 'dimgray'),
+counters = all_df.groupby('group')['tokens'].sum().apply(Counter).to_dict() # get dict of counter objects
+
+# 2 - compute log-odds and get top words
+comparisons = [
+    ('source_stance', 'reply_stance', 'Stance (S/D/Q)'),
+    ('source_comment', 'reply_comment', 'Comment')
 ]
 
-for row, col, key, title, color in plot_configs:
-    ax = axes[row, col]
-    data = distributions[key]
-    tokens_counter = data['tokens']
-    count = data['count']
-    
-    # top n tokens by frequency
-    top_tokens = tokens_counter.most_common(top_n)
-    
-    if top_tokens:
-        tokens, freqs = zip(*top_tokens)
-        sns.barplot(x=list(freqs), y=list(tokens), ax=ax,
-                    color=color, legend=False)
-        ax.set_xlabel('Token Count')
-        ax.set_ylabel('')
-        ax.set_title(f'{title}\n({count:,} tweets)')
-    else:
-        print(f'no data for {key}!')
+plot_data = []
+for src, rpl, panel in comparisons:
+    log_odds = compute_log_odds_ratio(counters[src], counters[rpl])
+    top_words = get_top_log_odds_words(log_odds, counters[src], counters[rpl])
+    plot_data.extend({'word': w, 'log_odds': v, 'type': 'Source' if v > 0 else 'Reply', 'panel': panel}
+                     for w, v in top_words)
 
-plt.suptitle('Token Distributions', fontsize=14)
-plt.tight_layout()
-if SAVE_DIR: 
-    plt.savefig(SAVE_DIR + 'token_dist.png', dpi=150, bbox_inches='tight')
+plot_df = pd.DataFrame(plot_data)
+
+# 3 - plot
+g = sns.FacetGrid(plot_df, col='panel', sharex=True, sharey=False, height=6)
+g.map_dataframe(sns.barplot, x='log_odds', y='word', hue='type', palette="tab10", saturation=1)
+
+for ax in g.axes.flat:
+    ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+    ax.set_xlabel(f'Log-Odds Ratio ({r"$\log_2$"})')
+    ax.set_ylabel('')
+    ax.set_title(f'{ax.get_title().replace("panel = ", "")}\n← Reply | Source →')
+g.add_legend(title='')
+g.tight_layout()
+
+if SAVE_DIR:
+    g.savefig(SAVE_DIR + 'token_dist.png', dpi=150, bbox_inches='tight')
     print(f"Saved: {SAVE_DIR}token_dist.png")
 plt.show()
 
