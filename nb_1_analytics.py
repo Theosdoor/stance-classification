@@ -4,6 +4,7 @@ import html
 import re
 import string
 from collections import Counter # like dict except returns 0 rather than key error
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
@@ -123,7 +124,6 @@ top_n = 10 # top n to plot
 
 # 2 - get unigrams and bigrams
 def get_bigrams(tokens):
-    """Generate bigrams from a list of tokens."""
     return [(tokens[i], tokens[i+1]) for i in range(len(tokens)-1)]
 
 unigrams = {'support': Counter(), 'deny': Counter(), 'query': Counter(), 'comment': Counter()}
@@ -137,159 +137,95 @@ for _, row in reply_df.iterrows():
 # 3 - print top unigrams and bigrams by stance
 labels = ['support', 'deny', 'query', 'comment']
 
-print("\n=== Top Unigrams and Bigrams by Stance ===\n")
 for label in labels:
     top_uni = unigrams[label].most_common(top_n)
     top_bi = bigrams[label].most_common(top_n)
-    print(f"--- {label.upper()} ---")
-    print(f"  Unigrams: {', '.join([w for w, _ in top_uni])}")
-    print(f"  Bigrams:  {', '.join([' '.join(b) for b, _ in top_bi])}")
-    print()
+    print(f"{label.upper()}")
+    print(f"unigrams: {', '.join([w for w, _ in top_uni])}")
+    print(f"bigrams:  {', '.join([' '.join(b) for b, _ in top_bi])}\n")
 
 # %%
 # (a) comparing token distributions
+top_n = 12 # top n to plot
+min_occurence = 10 # min count for words to include
 
-def compare_source_vs_reply_distributions(df):
-    # 4 categories: source_stance, source_non_stance, reply_stance, reply_non_stance
-    distributions = {
-        'source_stance': Counter(),
-        'source_non_stance': Counter(),
-        'reply_stance': Counter(),
-        'reply_non_stance': Counter(),
-    }
-    counts = {k: 0 for k in distributions}
+def compute_log_odds_ratio(counter_a, counter_b, prior=0.5):
+    # from stackoverflow - uses jeffreys prior smoothing
+    all_words = set(counter_a.keys()) | set(counter_b.keys())
+    total_a, total_b = sum(counter_a.values()), sum(counter_b.values())
+    n = len(all_words)
     
-    def process_row(row):
-        tokens = tokenize(row['text'])
-        is_source = row['source_id'] is None or (isinstance(row['source_id'], float) and pd.isna(row['source_id']))
-        is_stance = row['label_text'] != 'comment'
-        
-        if is_source and is_stance:
-            key = 'source_stance'
-        elif is_source and not is_stance:
-            key = 'source_non_stance'
-        elif not is_source and is_stance:
-            key = 'reply_stance'
-        else:
-            key = 'reply_non_stance'
-        
-        distributions[key].update(tokens)
-        counts[key] += 1
-    
-    df.apply(process_row, axis=1)
-    return {k: {'tokens': distributions[k], 'count': counts[k]} for k in distributions}
+    return {w: np.log2((counter_a.get(w, 0) + prior) / (total_a + prior * n) /
+                       ((counter_b.get(w, 0) + prior) / (total_b + prior * n)))
+            for w in all_words}
 
-# 1 - vars
-top_n = 15
+def get_top_log_odds_words(log_odds, counter_a, counter_b, n=top_n, min_count=min_occurence):
+    filtered = {w: v for w, v in log_odds.items() 
+                if counter_a.get(w, 0) + counter_b.get(w, 0) >= min_count}
+    sorted_words = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+    return sorted_words[-n:][::-1] + sorted_words[:n] # reply on LHS, then source on rhs
 
-# 2 - get distributions
-distributions = compare_source_vs_reply_distributions(all_df)
+# 1 - group tokens by source/reply and stance/comment
+all_df = all_df.copy()
+all_df['tokens'] = all_df['text'].apply(tokenize)
+all_df['group'] = (all_df['source_id'].isna().map({True: 'source', False: 'reply'}) + '_' +
+                   (all_df['label_text'] != 'comment').map({True: 'stance', False: 'comment'}))
 
-# 3 - plot
-_, axes = plt.subplots(2, 2, figsize=(12, 10))
-plot_configs = [
-    # (row, col, category, title, color)
-    (0, 0, 'source_stance', 'SOURCE Text - Stance (S/D/Q)', 'orange'),
-    (0, 1, 'source_non_stance', 'SOURCE Text - Non-stance (C)', 'gray'),
-    (1, 0, 'reply_stance', 'REPLY Text - Stance (S/D/Q)', 'red'),
-    (1, 1, 'reply_non_stance', 'REPLY Text - Non-stance (C)', 'dimgray'),
+counters = all_df.groupby('group')['tokens'].sum().apply(Counter).to_dict() # get dict of counter objects
+
+# 2 - compute log-odds and get top words
+comparisons = [
+    ('source_stance', 'reply_stance', 'Stance (SDQ)'),
+    ('source_comment', 'reply_comment', 'Comment')
 ]
 
-for row, col, key, title, color in plot_configs:
-    ax = axes[row, col]
-    data = distributions[key]
-    tokens_counter = data['tokens']
-    count = data['count']
-    
-    # top n tokens by frequency
-    top_tokens = tokens_counter.most_common(top_n)
-    
-    if top_tokens:
-        tokens, freqs = zip(*top_tokens)
-        sns.barplot(x=list(freqs), y=list(tokens), ax=ax,
-                    color=color, legend=False)
-        ax.set_xlabel('Token Count')
-        ax.set_ylabel('')
-        ax.set_title(f'{title}\n({count:,} tweets)')
-    else:
-        print(f'no data for {key}!')
+plot_data = []
+for src, rpl, panel in comparisons:
+    log_odds = compute_log_odds_ratio(counters[src], counters[rpl])
+    top_words = get_top_log_odds_words(log_odds, counters[src], counters[rpl])
+    plot_data.extend({'word': w, 'log_odds': v, 'type': 'Source' if v > 0 else 'Reply', 'panel': panel}
+                     for w, v in top_words)
 
-plt.suptitle('Token Distributions', fontsize=14)
-plt.tight_layout()
-if SAVE_DIR: 
-    plt.savefig(SAVE_DIR + 'token_dist.png', dpi=150, bbox_inches='tight')
+plot_df = pd.DataFrame(plot_data)
+
+# 3 - plot
+g = sns.FacetGrid(plot_df, col='panel', sharex=True, sharey=False, height=6)
+g.map_dataframe(sns.barplot, x='log_odds', y='word', hue='type', palette="tab10", saturation=1)
+
+for ax in g.axes.flat:
+    ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+    ax.set_xlabel(f'Log-Odds Ratio ({r"$\log_2$"})')
+    ax.set_ylabel('')
+    ax.set_title(f'{ax.get_title().replace("panel = ", "")}\n← Reply | Source →')
+g.tight_layout()
+
+if SAVE_DIR:
+    g.savefig(SAVE_DIR + 'token_dist.png', dpi=150, bbox_inches='tight')
     print(f"Saved: {SAVE_DIR}token_dist.png")
 plt.show()
 
 # %%
 # (b) LDA analysis
-def get_topic_words(lda_model, n_words=20):
-    topics = []
-    for topic_id in range(lda_model.num_topics):
-        # get_topic_terms returns (word_id, probability) pairs
-        top_terms = lda_model.get_topic_terms(topic_id, topn=n_words)
-        top_words = [(lda_model.id2word[word_id], prob) for word_id, prob in top_terms]
-        topics.append(top_words)
-    return topics
 
-def print_topics(topics, title):
-    print(f"{title} - LDA topics:")
-    for i, topic in enumerate(topics):
-        words = [w for w, _ in topic]
-        print(f"[{i}]: {', '.join(words)}")
+# vars
+n_topics = 8 # seemed good from gensim cohesion model tried during testing
 
-def create_wordcloud(topics, title, save_path=None):
-    n_topics = len(topics)
-    n_cols = (n_topics + 1) // 2
-    n_rows = 2 if n_topics > 1 else 1
-    
-    _, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 4*n_rows))
-    axes = axes.flatten() if n_topics > 1 else [axes]
-    
-    for i, topic in enumerate(topics):
-        ax = axes[i]
-        word_freq = {word: score for word, score in topic}
-        wc = WordCloud(width=400, height=400, background_color='white',
-                        max_words=50, min_font_size=12, prefer_horizontal=0.9)
-        wc.generate_from_frequencies(word_freq)
-        ax.imshow(wc, interpolation='bilinear')
-        ax.set_title(f'Topic {i+1}', fontsize=14)
-        ax.axis('off')
-    
-    # hide unused subplots if odd number of topics
-    for j in range(n_topics, len(axes)):
-        axes[j].axis('off')
-    
-    plt.suptitle(title, fontsize=16)
-    plt.tight_layout()
-    
-    if save_path: 
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {save_path}")
-    plt.show()
-
-# 1 - vars
-n_topics = 8
-
-# 2 - run LDA for each stance (use reply_df defined earlier to only plot replies)
+# run lda for each stance (use reply_df defined earlier to only plot replies)
 stance_df = reply_df[reply_df['label_text'].isin(['support', 'deny', 'query'])]
 comment_df = reply_df[reply_df['label_text'] == 'comment']
-
-print(f"\nStance samples (S/D/Q): {len(stance_df)}")
-print(f"Comment samples: {len(comment_df)}")
 
 # tokenize
 stance_texts = stance_df['text'].apply(tokenize).tolist()
 comment_texts = comment_df['text'].apply(tokenize).tolist()
 
-# build corpus and dictionary
+# build corpora and dicts
 stance_id2word = corpora.Dictionary(stance_texts)
 stance_corpus = [stance_id2word.doc2bow(text) for text in stance_texts]
 
 comment_id2word = corpora.Dictionary(comment_texts)
 comment_corpus = [comment_id2word.doc2bow(text) for text in comment_texts]
 
-# train LDA models
+# train models
 stance_lda = LdaModel(
     corpus=stance_corpus, id2word=stance_id2word, num_topics=n_topics,
     passes=20, random_state=RAND_SEED, alpha='auto', eta='auto'
@@ -300,21 +236,68 @@ comment_lda = LdaModel(
 )
 
 # %%
+# topic word lists
+!pip install tabulate # for to_markdown
+n_words_to_show = 10
+
+def get_topic_words(lda_model, n_words=20):
+    topics = []
+    for topic_id in range(lda_model.num_topics):
+        top_terms = lda_model.get_topic_terms(topic_id, topn=n_words)
+        top_words = [(lda_model.id2word[word_id], prob) for word_id, prob in top_terms]
+        topics.append(top_words)
+    return topics
+
+def create_topic_table(lda_model, n_words=10):
+    """Create a DataFrame of top words per topic for easy export."""
+    topics = get_topic_words(lda_model, n_words)
+    table_data = {f'Topic {i+1}': [word for word, _ in topic] for i, topic in enumerate(topics)}
+    return pd.DataFrame(table_data)
+
+stance_table = create_topic_table(stance_lda, n_words=n_words_to_show)
+comment_table = create_topic_table(comment_lda, n_words=n_words_to_show)
+
+print("Stance topics:")
+print(stance_table.to_markdown(index=False))
+
+print("\nComment topics:")
+print(comment_table.to_markdown(index=False))
+
+# %%
 # wordclouds
+n_words_to_show = 20
 
-# stance wordcloud
-stance_topics = get_topic_words(stance_lda)
-print_topics(stance_topics, "Stance Replies (S/D/Q)")
+def create_wordcloud(topics, title, save_path=None):
+    n_topics = len(topics)
+    
+    _, axes = plt.subplots(1, n_topics, figsize=(4*n_topics, 4))
+    if n_topics == 1:
+        axes = [axes]  # ensure axes is iterable for single topic
+    
+    for i, (ax, topic) in enumerate(zip(axes, topics)):
+        word_freq = {word: score for word, score in topic}
+        wc = WordCloud(width=400, height=400, background_color='white',
+                       max_words=50, min_font_size=12)
+        wc.generate_from_frequencies(word_freq)
+        ax.imshow(wc, interpolation='bilinear')
+        ax.set_title(f'Topic {i+1}', fontsize=20, fontweight='bold')
+        ax.axis('off')
+    
+    plt.suptitle(title, fontsize=24, fontweight='bold')
+    plt.tight_layout()
+    
+    if save_path: 
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+    plt.show()
 
+stance_topics = get_topic_words(stance_lda, n_words_to_show)
 save_path = SAVE_DIR + "stance_wordcloud.png" if SAVE_DIR else None
-create_wordcloud(stance_topics, "Stance Replies (S/D/Q) Topics", save_path)
+create_wordcloud(stance_topics, "Stance Topics", save_path)
 
-# comment wordcloud
-comment_topics = get_topic_words(comment_lda)
-print_topics(comment_topics, "Comment Replies")
-
+comment_topics = get_topic_words(comment_lda, n_words_to_show)
 save_path = SAVE_DIR + "comment_wordcloud.png" if SAVE_DIR else None
-create_wordcloud(comment_topics, "Comment Replies Topics", save_path)
+create_wordcloud(comment_topics, "Comment Topics", save_path)
 
 # %%
 # vis lda word lists with tmplot
