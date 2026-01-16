@@ -1,4 +1,4 @@
-# README.md
+# Towards Automated Rumour Stance Classification
 <!-- README.md with commands, include random seeds, package versions, and the exact SemEval data files used. -->
 
 ## Quickstart
