@@ -1,10 +1,9 @@
-# 2025NLP_Assignment Brief.pdf
-# practicals/
-downloaded_data/*
-wandb/
-.vscode/
-saved_data/
+# macOS
+.DS_Store
 
+# Project-specific
+downloaded_data/*
+saved_data/
 *.err
 
 # Byte-compiled / optimized / DLL files

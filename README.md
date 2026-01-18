@@ -1,6 +1,18 @@
 # Towards Automated Rumour Stance Classification
 <!-- README.md with commands, include random seeds, package versions, and the exact SemEval data files used. -->
 
+## Tweet Viewer
+
+An interactive web-based viewer for exploring the SemEval 2017 Task 8 dataset is available at:
+
+🔗 **[https://theosdoor.github.io/stance-classification/](https://theosdoor.github.io/stance-classification/)**
+
+The viewer displays Twitter conversation threads with their stance labels:
+- **Support (S)** – replies supporting the rumour claim
+- **Deny (D)** – replies denying or refuting the claim  
+- **Query (Q)** – replies questioning the claim's veracity
+- **Comment (C)** – neutral comments without clear stance
+
 ## Quickstart
 
 ### 1. Set up data
