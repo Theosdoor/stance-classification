@@ -47,7 +47,7 @@ cd .. # back to root
 ### 2. Install dependencies
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 3. Run notebooks
