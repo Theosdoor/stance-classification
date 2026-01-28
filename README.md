@@ -1,6 +1,9 @@
 # Towards Automated Rumour Stance Classification
 <!-- README.md with commands, include random seeds, package versions, and the exact SemEval data files used. -->
 
+![Comparison of all 5 classification methods on the test set](results/exp4_test_final.png)
+*Figure 14: Comparison of all 5 classification methods on the test set. The classifier score is the test set performance of the best model for validation macro-F1. Prompting scores are averaged over 3 runs on the test set.*
+
 ## Tweet Viewer
 
 An interactive web-based viewer for exploring the SemEval 2017 Task 8 dataset is available at:
