@@ -4,6 +4,12 @@
 ![Comparison of all 5 classification methods on the test set](results/exp4_test_final.png)
 *Figure 14: Comparison of all 5 classification methods on the test set. The classifier score is the test set performance of the best model for validation macro-F1. Prompting scores are averaged over 3 runs on the test set.*
 
+Submitted as part of 4th year NLP module (MSci Natural Sciences) to the Department of Computer Science at Durham University.
+
+**Grade:** 1st Class (80%)
+
+Feedback - see `feedback.txt`
+
 ## Tweet Viewer
 
 An interactive web-based viewer for exploring the SemEval 2017 Task 8 dataset is available at:

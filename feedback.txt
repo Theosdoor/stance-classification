@@ -1,0 +1,55 @@
+1a) Analytics: Unigrams, Bigrams, and Token Distribution Comparison (9 / 10)
+
+Unigram and bigram statistics were extracted correctly and interpreted appropriately, with clear identification of stance-related lexical cues. A comparison between source and reply text was included using log-odds ratios, which addressed the brief directly. The analysis focused mainly on frequent tokens and would have benefited from a more systematic synthesis across stance categories.
+
+
+
+1b) Analytics: Topic Modelling with LDA (7 / 10)
+
+LDA was applied appropriately with coherence-based topic selection. Differences between stance and comment topics were described clearly, and the event-driven nature of stance topics was correctly identified. The analysis was sound but largely descriptive, with limited connection to later modelling decisions.
+
+
+
+2a.I) Classification: Fine-tuned Transformer Model (13 / 15)
+
+BERTweet-large was selected appropriately and fine-tuned with a well-documented setup, including LoRA, weighted loss, and contextual input construction. Hyperparameters and preprocessing were clearly reported, and design choices were justified empirically. The modelling approach was strong and met the brief well.
+
+
+
+2a.II) Classification: Test Performance Analysis (8 / 10)
+
+Evaluation was thorough, using macro-F1, per-class metrics, and confusion matrices. The impact of class imbalance was analysed accurately, particularly the low precision for Support and Deny. The discussion was clear and evidence based, though largely quantitative.
+
+
+
+2b.I) Prompting: Zero-shot and Few-shot (12 / 15)
+
+Zero-shot and few-shot prompting were implemented carefully with clear prompt templates and controlled output formats. Ablation of system prompt components was well executed. Performance remained limited, but this was analysed appropriately in relation to model bias and task difficulty.
+
+
+
+2b.II) Prompting: Evaluation, Recommendations, and Failure Modes (8 / 10)
+
+Prompting results were analysed using suitable metrics and confusion matrices. Key failure modes, particularly over-prediction of Query and under-prediction of Comment, were clearly identified and supported by examples. The discussion was accurate and well grounded. A reasonable size of the testset is used.
+
+
+
+2c) Chain-of-Thought Two-Stage Strategy (11 / 15)
+
+A two-stage CoT strategy was implemented and evaluated systematically. Error propagation and bias toward stance predictions were analysed clearly. While performance did not exceed direct fine-tuning, the limitations were identified realistically and discussed with appropriate caution.
+
+
+
+3. Ethics (8 / 10)
+
+   Ethical issues relating to privacy, dataset bias, and misuse were discussed clearly and with reference to the specific task. The need for human oversight was articulated well. Mitigation strategies were sensible but remained largely high level.
+
+
+
+4. Academic Writing and Presentation (4 / 5)
+
+   The report was clearly structured, technically precise, and written in an appropriate academic style. Figures and tables were well integrated and supported the analysis. Very good use of visualisation.
+
+
+
+Overall Mark: 80%
